@@ -124,10 +124,11 @@ bool HdlEngine::processNextFrame()
 //        double R = sqrt(pow((col+0.5)*gridsize-width/2,2)+pow(height/2-(row+0.5)*gridsize,2));
 //        double a =(acos(((col+0.5)*gridsize-width/2)/R ));
 //        int line = int(a/M_PI*angle);
-        if(rotAngle > params.ProbMap.RightDetectAngleBoundary
+        if(/*rotAngle > params.ProbMap.RightDetectAngleBoundary
                 && rotAngle < params.ProbMap.LeftDetectAngleBoundary
-                && z < 0) //z < 0 means current point fall below the LiDAR, so it's of interest for us.
+                && */z < 0) //z < 0 means current point fall below the LiDAR, so it's of interest for us.
         {
+            ++dynamicMap.at(id).pointNum;
             if (!dynamicMap.at(id).highest &&!dynamicMap.at(id).lowest)
             {
                 dynamicMap.at(id).highest = z;
@@ -146,7 +147,7 @@ bool HdlEngine::processNextFrame()
         }
     }
     calcProbability();
-    rayTracing(currentPose);
+//    rayTracing(currentPose);
     updateAccumMap();
     updateLocalMap();
 #ifdef DEBUG
@@ -279,6 +280,13 @@ bool HdlEngine::updateAccumMap()
             }else
             {
                 newAccumMap[id] = dynamicMap[id];
+            }//END ALL IF
+            if(newAccumMap[id].p > params.ProbMap.OccupiedThreshold)
+            {
+                newAccumMap[id].type = OCCUPIED;
+            }
+            else if (newAccumMap[id].p < params.ProbMap.ClearThreshold){
+                newAccumMap[id].type = CLEAR;
             }
         }
     }
@@ -358,7 +366,7 @@ bool HdlEngine::updateRegion(cv::Mat region, const std::vector<Grid> &accumMap)
         for(unsigned short y = 0; y < accumMapRange.maxY; ++y)
         {
             int id = y * dynamicMapRange.maxX + x;
-            if(accumMap.at(id).p > 0.5 /*|| accumMap.at(id).type == OCCUPIED*/)
+            if(accumMap.at(id).p > 0.5 || accumMap.at(id).type == OCCUPIED)
             {
                 writeOnMat(region, x, y, OCCUPIED);
             }
@@ -582,10 +590,24 @@ bool HdlEngine::calcProbability()
 {
     //The following for-loop corresponse to XIAO KE's ProbabilityMap()
     for(auto &g : dynamicMap){
-        //here, n is defined as unsigned char, because when interval is less than unitHeight, we don't want to modify the mid probability (0.5)
         unsigned char n = (g.highest - g.lowest) / params.ProbMap.unitHeight;
-        g.p = 0.5 + n * params.ProbMap.incrementUnit;
-        g.p > 1 ? g.p = 1 : 0;
+        if(n) // current grid contain laser points and interval between highest and lowest is greater than unitHeight
+        {
+            g.p = 0.5 + n * params.ProbMap.incrementUnit;
+            g.p > 1 ? g.p = 1 : 0;
+#ifdef MOREDETAILS
+            if(g.p > 0.5)
+                g.type = OCCUPIED;
+#endif
+        }
+        else if (g.pointNum){//current grid contain laser point(s) but interval is smaller
+            g.p = 0.5 - params.ProbMap.incrementUnit / 100;
+            g.p < 0 ? g.p = 0 : 0;
+#ifdef MOREDETAILS
+            if(g.p < 0.5)
+                g.type = CLEAR;
+#endif
+        }
     }//end for(auto g:...)
 
     return true;
