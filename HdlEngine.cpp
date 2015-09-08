@@ -129,6 +129,7 @@ bool HdlEngine::processNextFrame()
                 && */z < 0) //z < 0 means current point fall below the LiDAR, so it's of interest for us.
         {
             ++dynamicMap.at(id).pointNum;
+            dynamicMap.at(id).average = (dynamicMap.at(id).average + z) / dynamicMap.at(id).pointNum;//testing
             if (!dynamicMap.at(id).highest &&!dynamicMap.at(id).lowest)
             {
                 dynamicMap.at(id).highest = z;
@@ -154,14 +155,14 @@ bool HdlEngine::processNextFrame()
     if(params.LocalMap.SaveNeeded.count(frameProcessedNum)
             || (params.LocalMap.SaveInterval != 0 && frameProcessedNum % params.LocalMap.SaveInterval == 0) ){
         DLOG(INFO) << "Saving local map...";
-        std::string lname("localmap-"), bname("localmap-3b-")/*, dname("dynamicmap-"), aname("accummap-")*/;
+        std::string lname("localmap-"), bname("localmap-3b-"), dname("dynamicmap-")/*, aname("accummap-")*/;
         lname += std::to_string(frameProcessedNum) + ".png";
         bname += std::to_string(frameProcessedNum) + ".png";
-//        dname += std::to_string(frameProcessedNum) + ".png";
+        dname += std::to_string(frameProcessedNum) + ".png";
 //        aname += std::to_string(frameProcessedNum) + ".png";
         saveLocalMap(lname);
         write3bPng(bname);
-//        saveFrame(dynamicMap, dynamicMapRange.maxX, dynamicMapRange.maxY, dname);
+        saveFrame(dynamicMap, dynamicMapRange.maxX, dynamicMapRange.maxY, dname);
 //        saveFrame(accumMap, accumMapRange.maxX, accumMapRange.maxY, aname);
 //        visualLocalMap("visualLocalMap.png");
     }
@@ -181,9 +182,11 @@ bool HdlEngine::saveFrame(const std::vector<Grid> &frame, int width, int height,
         if (frame.at(i).p < 0.5)
         {
             img.at<uchar>(row, col) = 255;
+//            DLOG(INFO) << "Clear: " <<frame.at(i).pointNum;
         } else if (frame.at(i).p > 0.5)
         {
             img.at<uchar>(row, col) = 0;
+//            DLOG(INFO) << "Occupied: " <<frame.at(i).pointNum;
         }
     }
     cv::imwrite(name.c_str(), img);
@@ -224,72 +227,117 @@ bool HdlEngine::updateAccumMap()
         {
             int id = y * dynamicMapRange.maxX + x;
             unsigned short accumX, accumY;
+
             if(dynamicMapRange.translate(x, y, accumMapRange, accumX, accumY))
             {
                 //Firstly, copy old accumulated map value to new map
                 int accumId = accumY * accumMapRange.maxX + accumX;
                 newAccumMap[id] = accumMap[accumId];
+            }
 
                 //then merge new accumulated map with dynamic map
-                if (newAccumMap[id].p < 0.5)
-                {
-                    if (dynamicMap[id].p < newAccumMap[id].p)
-                    {
-                        newAccumMap[id].p = dynamicMap[id].p;
-                    }
-                    else if (dynamicMap[id].p >= 0.99)
-                    {
-                        float S = (dynamicMap[id].p / (1 - dynamicMap[id].p))
-                            * (newAccumMap[id].p / (1 - newAccumMap[id].p));
-                        newAccumMap[id].p = S / (1 + S);
-                        if (newAccumMap[id].p > 0.99)
-                        {
-                            newAccumMap[id].p = 0.99;
-                        }
-                        else if (newAccumMap[id].p <= 0.01)
-                        {
-                            newAccumMap[id].p = 0.01;
-                        }
-                    }
-                }
-                else if (newAccumMap[id].p > 0.5)
-                {
-                    if (dynamicMap[id].p > newAccumMap[id].p)
-                    {
-                        newAccumMap[id].p = dynamicMap[id].p;
-                    }
-                    else if (dynamicMap[id].p <= 0.01)
-                    {
-                        float S = (dynamicMap[id].p / (1 - dynamicMap[id].p))
-                            * (newAccumMap[id].p / (1 - newAccumMap[id].p));
-                        newAccumMap[id].p = S / (1 + S);
-                        if (newAccumMap[id].p > 0.99)
-                        {
-                            newAccumMap[id].p = 0.99;
-                        }
-                        else if (newAccumMap[id].p <= 0.01)
-                        {
-                            newAccumMap[id].p = 0.01;
-                        }
-                    }
-                }
-                else if (newAccumMap[id].p == 0.5 && dynamicMap[id].p != 0.5)
-                {
-                    newAccumMap[id].p = dynamicMap[id].p;
-                }
-            }else
+                newAccumMap[id] += dynamicMap[id];
+//                if (newAccumMap[id].p < 0.5)
+//                {
+//                    if (dynamicMap[id].p < newAccumMap[id].p)
+//                    {
+//                        newAccumMap[id].p = dynamicMap[id].p;
+//                    }
+//                    else if (dynamicMap[id].p > 0.5/*0.99*/)
+//                    {
+//                        float S = (dynamicMap[id].p / (1 - dynamicMap[id].p))
+//                            * (newAccumMap[id].p / (1 - newAccumMap[id].p));
+//                        newAccumMap[id].p = S / (1 + S);
+//                        if (newAccumMap[id].p > 0.99)
+//                        {
+//                            newAccumMap[id].p = 0.99;
+//                        }
+//                        else if (newAccumMap[id].p <= 0.01)
+//                        {
+//                            newAccumMap[id].p = 0.01;
+//                        }
+//                    }
+//                }
+//                else if (newAccumMap[id].p > 0.5)
+//                {
+//                    if (dynamicMap[id].p > newAccumMap[id].p)
+//                    {
+//                        newAccumMap[id].p = dynamicMap[id].p;
+//                    }
+//                    else if (dynamicMap[id].p < 0.5/*0.01*/)
+//                    {
+//                        float S = (dynamicMap[id].p / (1 - dynamicMap[id].p))
+//                            * (newAccumMap[id].p / (1 - newAccumMap[id].p));
+//                        newAccumMap[id].p = S / (1 + S);
+//                        if (newAccumMap[id].p > 0.99)
+//                        {
+//                            newAccumMap[id].p = 0.99;
+//                        }
+//                        else if (newAccumMap[id].p <= 0.01)
+//                        {
+//                            newAccumMap[id].p = 0.01;
+//                        }
+//                    }
+//                }
+//                else if (newAccumMap[id].p == 0.5 && dynamicMap[id].p != 0.5)
+//                {
+//                    newAccumMap[id].p = dynamicMap[id].p;
+//                }
+//            }else
+//            {
+//                newAccumMap[id] = dynamicMap[id];
+//            }//END ALL IF
+
+//            if(newAccumMap[id].p > params.ProbMap.OccupiedThreshold)
+//            {
+//                newAccumMap[id].type = OCCUPIED;
+//            }
+//            else if (newAccumMap[id].p < params.ProbMap.ClearThreshold){
+//                newAccumMap[id].type = CLEAR;
+//            }
+//            short mid = (newAccumMap.at(id).highest + newAccumMap.at(id).lowest) / 2;
+//            short interval = newAccumMap.at(id).highest - newAccumMap.at(id).lowest;
+//            if( interval > params.ProbMap.unitHeight
+//                    && abs(mid - newAccumMap.at(id).average) < interval * params.ProbMap.MaxAvgMidDiff
+//                    && newAccumMap.at(id).average > params.ProbMap.MaxGroundHeight )
+//            {
+//                newAccumMap[id].type = OCCUPIED;
+//            }
+//            else if( newAccumMap.at(id).pointNum &&
+//                    newAccumMap.at(id).lowest < params.ProbMap.MaxGroundHeight)
+//            {
+//                newAccumMap[id].type = CLEAR;
+//            }
+            if(newAccumMap.at(id).HitCount >= params.ProbMap.OccupiedThreshold)
             {
-                newAccumMap[id] = dynamicMap[id];
-            }//END ALL IF
-            if(newAccumMap[id].p > params.ProbMap.OccupiedThreshold)
-            {
-                newAccumMap[id].type = OCCUPIED;
+                newAccumMap.at(id).type = OCCUPIED;
             }
-            else if (newAccumMap[id].p < params.ProbMap.ClearThreshold){
+            else if(newAccumMap[id].type != OCCUPIED && newAccumMap[id].pointNum)
+            {
                 newAccumMap[id].type = CLEAR;
             }
         }
     }
+    //following codes are for debugging
+    if(frameProcessedNum == 300){
+        std::ofstream pointStatics("pointStatics.txt");
+        for(unsigned short x = 0; x < accumMapRange.maxX; ++x)
+        {
+            for(unsigned short y = 0; y < accumMapRange.maxY; ++y)
+            {
+                unsigned short dynamX, dynamY;
+
+                if(!accumMapRange.translate(x, y, dynamicMapRange, dynamX, dynamY))
+                {
+                    int id = x * accumMapRange.maxX + y;
+                    pointStatics << std::to_string(accumMap.at(id).HitCount) << '\t'
+                                 << std::to_string(accumMap.at(id).pointNum) << std::endl;
+                }
+            }
+        }
+        pointStatics.close();
+    }
+    //end debug codes
     accumMap = newAccumMap;
     accumMapRange = dynamicMapRange;
     return true;
@@ -365,6 +413,8 @@ bool HdlEngine::updateRegion(cv::Mat region, const std::vector<Grid> &accumMap)
     {
         for(unsigned short y = 0; y < accumMapRange.maxY; ++y)
         {
+            if(region.at<unsigned char>(region.rows - y -1, x) ==OCCUPIED)
+                continue;
             int id = y * dynamicMapRange.maxX + x;
             if(accumMap.at(id).p > 0.5 || accumMap.at(id).type == OCCUPIED)
             {
@@ -374,10 +424,10 @@ bool HdlEngine::updateRegion(cv::Mat region, const std::vector<Grid> &accumMap)
             {
                 writeOnMat(region, x, y, CLEAR);
             }
-            else
-            {
-                writeOnMat(region, x, y, UNKNOWN);
-            }
+//            else
+//            {
+//                writeOnMat(region, x, y, UNKNOWN);
+//            }
         }
     }
     return true;
@@ -533,6 +583,11 @@ bool HdlEngine::write3bPng(const std::string fileName, MapType type)
     return true;
 }
 
+const std::vector<Grid> &HdlEngine::getAccumMap()
+{
+    return accumMap;
+}
+
 
 bool HdlEngine::populateXYZ(RawHdlPoint *rawHdlPoints , HdlPointXYZ *hdlPointXYZs, int totalPointsNum)
 {
@@ -595,19 +650,22 @@ bool HdlEngine::calcProbability()
         {
             g.p = 0.5 + n * params.ProbMap.incrementUnit;
             g.p > 1 ? g.p = 1 : 0;
+            g.type = OCCUPIED;
+            g.HitCount = 1;
 #ifdef MOREDETAILS
             if(g.p > 0.5)
                 g.type = OCCUPIED;
 #endif
         }
-        else if (g.pointNum){//current grid contain laser point(s) but interval is smaller
-            g.p = 0.5 - params.ProbMap.incrementUnit / 100;
-            g.p < 0 ? g.p = 0 : 0;
-#ifdef MOREDETAILS
-            if(g.p < 0.5)
-                g.type = CLEAR;
-#endif
-        }
+        //because the S/(1+S) formula is actually not very effective. Here I used a much simpler way to handle this problem
+//        else if (g.pointNum){//current grid contain laser point(s) but interval is smaller
+//            g.p = 0.5 - params.ProbMap.incrementUnit / 100;
+//            g.p < 0 ? g.p = 0 : 0;
+//#ifdef MOREDETAILS
+//            if(g.p < 0.5)
+//                g.type = CLEAR;
+//#endif
+//        }
     }//end for(auto g:...)
 
     return true;

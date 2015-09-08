@@ -15,7 +15,7 @@ int main(int argc, char** argv)
         struct timeval start, end;
         gettimeofday(&start, NULL);
     HdlEngine hdlEngine(argv[1]);
-//    for(int i = 0; i < 150; ++i){
+//    for(int i = 0; i < 101; ++i){
 //        hdlEngine.processNextFrame();
 //    }
     int count = 0;

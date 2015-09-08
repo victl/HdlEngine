@@ -28,6 +28,8 @@ public /*method*/:
     inline void saveLocalMap(const std::string name);
     bool write3bPng(const std::string fileName = "unamed-map.png", MapType type = LOCALMAP);
 
+    inline const std::vector<Grid>& getAccumMap();
+
 private /*method*/:
     //XYZs are coordinates of each corresponding rawHdlPoints
     inline bool populateXYZ(RawHdlPoint *rawHdlPoints , HdlPointXYZ* hdlPointXYZs, int totalPointsNum);
