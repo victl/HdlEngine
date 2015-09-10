@@ -41,8 +41,8 @@ bool HdlEngine::initialize(const std::string hdlFileName)
         return false;
     }
     baseFileName = hdlFileName.substr(0,hdlFileName.size() - 4);
-    hdlInstream.is_open() ? hdlInstream.close(), hdlInstream.open(hdlFileName, std::ios::binary) : hdlInstream.open(hdlFileName, std::ios::binary);
-    carposeInstream.is_open() ? carposeInstream.close(), carposeInstream.open(baseFileName+".hdl_dgps") : carposeInstream.open(baseFileName+".hdl_dgps");
+    hdlInstream.is_open() ? hdlInstream.close(), hdlInstream.open(hdlFileName.c_str(), std::ios::binary) : hdlInstream.open(hdlFileName.c_str(), std::ios::binary);
+    carposeInstream.is_open() ? carposeInstream.close(), carposeInstream.open((baseFileName+".hdl_dgps").c_str()) : carposeInstream.open((baseFileName+".hdl_dgps").c_str());
     if(!hdlInstream){
         DLOG(FATAL)  << "Error reading HDL file: " << hdlFileName << "\nFile not exist or you don't have "
                                                                      "permission to access it.";
@@ -169,7 +169,7 @@ bool HdlEngine::processNextFrame()
         DLOG(INFO) << "Saving  map...";
         std::string  /*dynamicMapFileName("dynamicmap-"), */accumMapFileName("accummap-");
 //        dynamicMapFileName += std::to_string(frameProcessedNum) + ".png";
-        accumMapFileName += std::to_string(frameProcessedNum) + ".png";
+        accumMapFileName += /*std::*/to_string(frameProcessedNum) + ".png";
 //        saveFrame(dynamicMap, dynamicMapRange.maxX, dynamicMapRange.maxY, dynamicMapFileName);
         saveFrame(accumMap, accumMapRange.maxX, accumMapRange.maxY, accumMapFileName);
 #ifdef OFFLINE
@@ -359,8 +359,8 @@ bool HdlEngine::updateAccumMap()
                 if(accumMapRange.translate(x, y, dynamicMapRange, dynamX, dynamY))
                 {
                     int id = y * accumMapRange.maxX + x;
-                    pointStatics << std::to_string(accumMap.at(id).HitCount) << '\t'
-                                 << std::to_string(accumMap.at(id).pointNum) << std::endl;
+                    pointStatics << /*std::*/to_string(accumMap.at(id).HitCount) << '\t'
+                                 << /*std::*/to_string(accumMap.at(id).pointNum) << std::endl;
                 }
             }
         }
@@ -547,7 +547,7 @@ Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)
 
 bool HdlEngine::write3bPng(const std::string fileName, MapType type)
 {
-    std::ofstream osHeader(fileName+"-header.txt");
+    std::ofstream osHeader((fileName+"-header.txt").c_str());
     switch (type) {
     case DYNAMICMAP:
     {
@@ -712,29 +712,43 @@ bool HdlEngine::populateXYZ(RawHdlPoint *rawHdlPoints , HdlPointXYZ *hdlPointXYZ
 bool HdlEngine::calcProbability()
 {
     //The following for-loop corresponse to XIAO KE's ProbabilityMap()
-    for(auto &g : dynamicMap){
-        unsigned char n = (g.highest - g.lowest) / params.ProbMap.unitHeight;
-        if(n) // current grid contain laser points and interval between highest and lowest is greater than unitHeight
-        {
-            g.p = 0.5 + n * params.ProbMap.incrementUnit;
-            g.p > 1 ? g.p = 1 : 0;
-            g.type = OCCUPIED;
-            g.HitCount = 1;
-#ifdef MOREDETAILS
-            if(g.p > 0.5)
-                g.type = OCCUPIED;
-#endif
-        }
-        //because the S/(1+S) formula is actually not very effective. Here I used a much simpler way to handle this problem
-//        else if (g.pointNum){//current grid contain laser point(s) but interval is smaller
-//            g.p = 0.5 - params.ProbMap.incrementUnit / 100;
-//            g.p < 0 ? g.p = 0 : 0;
+//    for(auto &g : dynamicMap){
+//        unsigned char n = (g.highest - g.lowest) / params.ProbMap.unitHeight;
+//        if(n) // current grid contain laser points and interval between highest and lowest is greater than unitHeight
+//        {
+//            g.p = 0.5 + n * params.ProbMap.incrementUnit;
+//            g.p > 1 ? g.p = 1 : 0;
+//            g.type = OCCUPIED;
+//            g.HitCount = 1;
 //#ifdef MOREDETAILS
-//            if(g.p < 0.5)
-//                g.type = CLEAR;
+//            if(g.p > 0.5)
+//                g.type = OCCUPIED;
 //#endif
 //        }
-    }//end for(auto g:...)
+//        //because the S/(1+S) formula is actually not very effective. Here I used a much simpler way to handle this problem
+////        else if (g.pointNum){//current grid contain laser point(s) but interval is smaller
+////            g.p = 0.5 - params.ProbMap.incrementUnit / 100;
+////            g.p < 0 ? g.p = 0 : 0;
+////#ifdef MOREDETAILS
+////            if(g.p < 0.5)
+////                g.type = CLEAR;
+////#endif
+////        }
+//    }//end for(auto g:...)
+    for(size_t i = 0; i < dynamicMap.size(); ++i){
+        unsigned char n = (dynamicMap.at(i).highest - dynamicMap.at(i).lowest) / params.ProbMap.unitHeight;
+        if(n) // current grid contain laser points and interval between highest and lowest is greater than unitHeight
+        {
+            dynamicMap.at(i).p = 0.5 + n * params.ProbMap.incrementUnit;
+            dynamicMap.at(i).p > 1 ? dynamicMap.at(i).p = 1 : 0;
+            dynamicMap.at(i).type = OCCUPIED;
+            dynamicMap.at(i).HitCount = 1;
+#ifdef MOREDETAILS
+            if(dynamicMap.at(i).p > 0.5)
+                dynamicMap.at(i).type = OCCUPIED;
+#endif
+        }
+    }//end for(sizt_t i)
 
     return true;
 }

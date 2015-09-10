@@ -7,7 +7,7 @@ HdlCorrection::HdlCorrection(const std::string fileName)
 {
     //the dat file is converted from db.xml, only have the array info
     //used parse_xml_db solution to convert xml to dat file
-    std::ifstream fdb(fileName);
+    std::ifstream fdb(fileName.c_str());
     if (!fdb)
     {
         DLOG(FATAL) << "Error reading ladar calibration file.";
