@@ -14,12 +14,12 @@ int main(int argc, char** argv)
     }
         struct timeval start, end;
         gettimeofday(&start, NULL);
-    HdlEngine hdlEngine(argv[1]);
 //    for(int i = 0; i < 101; ++i){
 //        hdlEngine.processNextFrame();
 //    }
     int count = 0;
 #ifdef OFFLINE
+    HdlEngine hdlEngine(argv[1]);
     while(hdlEngine.processNextFrame()){++count;}
     hdlEngine.write3bPng("final-3b.png");
     hdlEngine.saveLocalMap("final.png");

@@ -26,3 +26,6 @@ INCLUDEPATH += /usr/include/opencv \
 CONFIG += c++14
 DEFINES += DEBUG
 DEFINES += OFFLINE
+
+DISTFILES += \
+    ../ugv-share/ugv.conf
