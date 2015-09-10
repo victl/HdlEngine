@@ -19,9 +19,14 @@ int main(int argc, char** argv)
 //        hdlEngine.processNextFrame();
 //    }
     int count = 0;
+#ifdef OFFLINE
     while(hdlEngine.processNextFrame()){++count;}
     hdlEngine.write3bPng("final-3b.png");
     hdlEngine.saveLocalMap("final.png");
+#else
+    HdlEngine hdlEngine;
+    hdlEngine.processNextFrame();
+#endif
         gettimeofday(&end, NULL);
         long useconds = end.tv_usec - start.tv_usec;
         long seconds  = end.tv_sec  - start.tv_sec;

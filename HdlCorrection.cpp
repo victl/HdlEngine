@@ -3,6 +3,7 @@
 #include <cmath>
 
 HdlCorrection::HdlCorrection(const std::string fileName)
+    : blockedByHipAngle(4500)
 {
     //the dat file is converted from db.xml, only have the array info
     //used parse_xml_db solution to convert xml to dat file

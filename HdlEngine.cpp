@@ -1,13 +1,28 @@
 #include "HdlEngine.h"
 #include <sys/time.h>
 
-HdlEngine::HdlEngine(const std::string hdlFileName)
+HdlEngine::HdlEngine()
     : frameProcessedNum(0)
-    , correction("new_xml.txt")
+    , correction(params.Ugv.CorrectionFile)
     , dynamicMapRange(params)
     , accumMapRange(params)
+    #ifdef OFFLINE
     , localMapRange(params)
     , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC1, cv::Scalar(127))
+    #endif
+{
+
+}
+
+HdlEngine::HdlEngine(const std::string hdlFileName)
+    : frameProcessedNum(0)
+    , correction(params.Ugv.CorrectionFile)
+    , dynamicMapRange(params)
+    , accumMapRange(params)
+    #ifdef OFFLINE
+    , localMapRange(params)
+    , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC1, cv::Scalar(127))
+    #endif
 {
     initialize(hdlFileName);
 }
@@ -49,30 +64,21 @@ bool HdlEngine::processNextFrame()
 #ifdef DEBUG
     DLOG(INFO) << "Processing frame No." << frameProcessedNum << "...";
 #endif
-    int totalPointsNum;
-    //Firstly, read num of points in current frame.
-    if(!hdlInstream.read((char*)&totalPointsNum, sizeof(totalPointsNum))){
-        //because DLOG(FATAL) will terminate the program immediately. It is no good for timing the program. so
-        //they are commented out during development.
-//        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading total points number "
-//                                                                     "of frame: " << frameProcessed;
-        return false;
-    }
-    //Secondly, read all points into container of raw HDL points
-    RawHdlPoint rawHdlPoints[totalPointsNum];
-    if(!hdlInstream.read((char*)rawHdlPoints, sizeof(RawHdlPoint)*totalPointsNum)){
-//        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading the" <<" points "
-//                                                                         "of frame: " << frameProcessed <<" error.";
-        return false;
-    }
-    //Thirdly, read in the carpos of current frame
-    Carpose currentPose;
-    carposeInstream >> currentPose.x >> currentPose.y >> currentPose.eulr;
-    carposes.push_back(currentPose);
 
-    //The fourth: traverse all points
-    //calculate each point's XYZ coordinates
-    HdlPointXYZ hdlPointXYZs[totalPointsNum];
+//read points from hdl
+#ifdef OFFLINE
+    if(!readPointsFromFile())
+    {
+        return false;
+    }
+#else
+    if(!readPointsFromShm())
+    {
+        DLOG(FATAL) << "Error(s) occurred during reading hdl points from shared memory." ;
+    }
+#endif
+
+    //traverse all points, calculate each point's XYZ coordinates
     populateXYZ(rawHdlPoints, hdlPointXYZs, totalPointsNum);
 
     //Process the dynamic map
@@ -82,10 +88,19 @@ bool HdlEngine::processNextFrame()
     dynamicMap.resize(dynamicMapRange.maxX * dynamicMapRange.maxY);
     for (int i = 0; i < totalPointsNum; ++i){
         //for convinence, define some tmp variables to represent current point's features:
-//        unsigned int distance = rawHdlPoints[i].distance;
+        unsigned int distance = rawHdlPoints[i].distance;
         unsigned short rotAngle = rawHdlPoints[i].rotAngle;
 //        unsigned char intensity = rawHdlPoints[i].intensity;
 //        unsigned char beamId = rawHdlPoints[i].beamId;
+
+        if( distance < 3000 //3 meters
+                && rotAngle > 18000 - correction.blockedByHipAngle  //135 degree
+                && rotAngle < 18000 + correction.blockedByHipAngle //225 degree
+                && hdlPointXYZs[i].z > 0 ) //point height is greater than LiDAR
+        {
+            //this point is not useful
+            continue;
+        }
         int x = hdlPointXYZs[i].x;
         int y = hdlPointXYZs[i].y;
         int z = hdlPointXYZs[i].z;
@@ -124,75 +139,87 @@ bool HdlEngine::processNextFrame()
 //        double R = sqrt(pow((col+0.5)*gridsize-width/2,2)+pow(height/2-(row+0.5)*gridsize,2));
 //        double a =(acos(((col+0.5)*gridsize-width/2)/R ));
 //        int line = int(a/M_PI*angle);
-        if(/*rotAngle > params.ProbMap.RightDetectAngleBoundary
-                && rotAngle < params.ProbMap.LeftDetectAngleBoundary
-                && */z < 0) //z < 0 means current point fall below the LiDAR, so it's of interest for us.
+        ++dynamicMap.at(id).pointNum;
+//        dynamicMap.at(id).average = (dynamicMap.at(id).average *dynamicMap.at(id).pointNum + z) / (dynamicMap.at(id).pointNum + 1);//testing
+        if (!dynamicMap.at(id).highest &&!dynamicMap.at(id).lowest)
         {
-            ++dynamicMap.at(id).pointNum;
-            dynamicMap.at(id).average = (dynamicMap.at(id).average + z) / dynamicMap.at(id).pointNum;//testing
-            if (!dynamicMap.at(id).highest &&!dynamicMap.at(id).lowest)
+            dynamicMap.at(id).highest = z;
+            dynamicMap.at(id).lowest = z;
+        }
+        else
+        {
+            if (dynamicMap.at(id).highest < z)
             {
                 dynamicMap.at(id).highest = z;
-                dynamicMap.at(id).lowest = z;
-            }
-            else
+            } else if (dynamicMap.at(id).lowest > z)
             {
-                if (dynamicMap.at(id).highest < z)
-                {
-                    dynamicMap.at(id).highest = z;
-                } else if (dynamicMap.at(id).lowest > z)
-                {
-                    dynamicMap.at(id).lowest = z;
-                }
+                dynamicMap.at(id).lowest = z;
             }
         }
     }
     calcProbability();
 //    rayTracing(currentPose);
     updateAccumMap();
+#ifdef OFFLINE
     updateLocalMap();
+#endif
 #ifdef DEBUG
     if(params.LocalMap.SaveNeeded.count(frameProcessedNum)
             || (params.LocalMap.SaveInterval != 0 && frameProcessedNum % params.LocalMap.SaveInterval == 0) ){
-        DLOG(INFO) << "Saving local map...";
-        std::string lname("localmap-"), bname("localmap-3b-"), dname("dynamicmap-")/*, aname("accummap-")*/;
-        lname += std::to_string(frameProcessedNum) + ".png";
-        bname += std::to_string(frameProcessedNum) + ".png";
-        dname += std::to_string(frameProcessedNum) + ".png";
-//        aname += std::to_string(frameProcessedNum) + ".png";
-        saveLocalMap(lname);
-        write3bPng(bname);
-        saveFrame(dynamicMap, dynamicMapRange.maxX, dynamicMapRange.maxY, dname);
-//        saveFrame(accumMap, accumMapRange.maxX, accumMapRange.maxY, aname);
+        DLOG(INFO) << "Saving  map...";
+        std::string  /*dynamicMapFileName("dynamicmap-"), */accumMapFileName("accummap-");
+//        dynamicMapFileName += std::to_string(frameProcessedNum) + ".png";
+        accumMapFileName += std::to_string(frameProcessedNum) + ".png";
+//        saveFrame(dynamicMap, dynamicMapRange.maxX, dynamicMapRange.maxY, dynamicMapFileName);
+        saveFrame(accumMap, accumMapRange.maxX, accumMapRange.maxY, accumMapFileName);
+#ifdef OFFLINE
+//        std::string localMapFileName("localmap-"), localMap3bFileName("localmap-3b-");
+//        localMapFileName += std::to_string(frameProcessedNum) + ".png";
+//        localMap3bFileName += std::to_string(frameProcessedNum) + ".png";
+//        saveLocalMap(localMapFileName);
+//        write3bPng(localMap3bFileName);
 //        visualLocalMap("visualLocalMap.png");
+#endif
     }
 #endif
-
 
     return true;
 }
 
-//This function is very IN-MATURE, I couldn't find where the problem is. So, pls use it with caution!
+//This function is very IN-MATURE, seemed to have some minor bugs, but I couldn't find where the problem is. So, pls use it with caution!
 bool HdlEngine::saveFrame(const std::vector<Grid> &frame, int width, int height,const std::string& name)
 {
     cv::Mat img(width, height, CV_8UC1, cv::Scalar(127));
     for(uint i = 0; i < frame.size(); ++i){
         int row = height - i / width - 1;
         int col = i % width;
-        if (frame.at(i).p < 0.5)
-        {
-            img.at<uchar>(row, col) = 255;
-//            DLOG(INFO) << "Clear: " <<frame.at(i).pointNum;
-        } else if (frame.at(i).p > 0.5)
-        {
+//        if (frame.at(i).p < 0.5)
+//        {
+//            img.at<uchar>(row, col) = 255;
+////            DLOG(INFO) << "Clear: " <<frame.at(i).pointNum;
+//        } else if (frame.at(i).p > 0.5)
+//        {
+//            img.at<uchar>(row, col) = 0;
+////            DLOG(INFO) << "Occupied: " <<frame.at(i).pointNum;
+//        }
+        switch (frame.at(i).type) {
+        case OCCUPIED:
             img.at<uchar>(row, col) = 0;
-//            DLOG(INFO) << "Occupied: " <<frame.at(i).pointNum;
+            break;
+        case CLEAR:
+            img.at<uchar>(row, col) = 255;
+            break;
+        default:
+            break;
         }
     }
-    cv::imwrite(name.c_str(), img);
+    cv::imshow("map of current frame", img);
+    cv::waitKey(80);
+//    cv::imwrite(name, img);
     return true;
 }
 
+#ifdef OFFLINE
 bool HdlEngine::visualLocalMap(const std::string &name)
 {
     cv::Mat img(localMap.rows, localMap.cols, CV_8UC1, cv::Scalar(127));
@@ -217,6 +244,7 @@ void HdlEngine::saveLocalMap(const std::string name)
 {
     cv::imwrite(name, localMap);
 }
+#endif
 
 bool HdlEngine::updateAccumMap()
 {
@@ -319,6 +347,7 @@ bool HdlEngine::updateAccumMap()
         }
     }
     //following codes are for debugging
+#ifdef DEBUG
     if(frameProcessedNum == 300){
         std::ofstream pointStatics("pointStatics.txt");
         for(unsigned short x = 0; x < accumMapRange.maxX; ++x)
@@ -327,9 +356,9 @@ bool HdlEngine::updateAccumMap()
             {
                 unsigned short dynamX, dynamY;
 
-                if(!accumMapRange.translate(x, y, dynamicMapRange, dynamX, dynamY))
+                if(accumMapRange.translate(x, y, dynamicMapRange, dynamX, dynamY))
                 {
-                    int id = x * accumMapRange.maxX + y;
+                    int id = y * accumMapRange.maxX + x;
                     pointStatics << std::to_string(accumMap.at(id).HitCount) << '\t'
                                  << std::to_string(accumMap.at(id).pointNum) << std::endl;
                 }
@@ -337,12 +366,14 @@ bool HdlEngine::updateAccumMap()
         }
         pointStatics.close();
     }
+#endif
     //end debug codes
     accumMap = newAccumMap;
     accumMapRange = dynamicMapRange;
     return true;
 }
 
+#ifdef OFFLINE
 bool HdlEngine::updateLocalMap()
 {
     //if the first time to update
@@ -383,21 +414,21 @@ bool HdlEngine::adjustLocalMapSize()
     cv::Rect rect(0, 0, before.maxX, before.maxY);
     if(localMapRange.left > accumMapRange.left)
     {
-        localMapRange.left -= params.LocalMap.incrementUnit;
-        rect.x = params.LocalMap.incrementUnit * params.Scale.xScale;
+        localMapRange.left -= params.LocalMap.ExpandUnit;
+        rect.x = params.LocalMap.ExpandUnit * params.Scale.xScale;
     }
     else if (localMapRange.right < accumMapRange.right)
     {
-        localMapRange.right += params.LocalMap.incrementUnit;
+        localMapRange.right += params.LocalMap.ExpandUnit;
     }
     if(localMapRange.bottom > accumMapRange.bottom)
     {
-        localMapRange.bottom -= params.LocalMap.incrementUnit;
+        localMapRange.bottom -= params.LocalMap.ExpandUnit;
     }
     else if(localMapRange.top < accumMapRange.top)
     {
-        localMapRange.top += params.LocalMap.incrementUnit;
-        rect.y = params.LocalMap.incrementUnit * params.Scale.yScale;
+        localMapRange.top += params.LocalMap.ExpandUnit;
+        rect.y = params.LocalMap.ExpandUnit * params.Scale.yScale;
     }
     localMapRange.update();
     cv::Mat newLocalMap(localMapRange.maxY, localMapRange.maxX, CV_8UC1, cv::Scalar(127));
@@ -432,6 +463,7 @@ bool HdlEngine::updateRegion(cv::Mat region, const std::vector<Grid> &accumMap)
     }
     return true;
 }
+#endif
 
 bool HdlEngine::writeOnMat(cv::Mat mat, int x, int y, unsigned char value)
 {
@@ -451,9 +483,11 @@ Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)
     case ACCUMMAP:
         value = accumMap.at( yy * accumMapRange.maxX + xx ).type;
         break;
+#ifdef OFFLINE
     case LOCALMAP:
         value = localMap.at<unsigned char>( localMap.rows - yy - 1, xx);
         break;
+#endif
     default:
         DLOG(FATAL) << "Wrong map type: " << type
                     << ".(inside get3b()) Please check out defines.h (enum MapType section) to see valid types.";
@@ -462,11 +496,9 @@ Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)
 
     switch (value) {
     case LANELINE:
-    case 1://for old file capability
         point.base |= (ROADEDGE_CLEAR | LANELINE_DOTTED);
         break;
     case ZEBRA:
-    case 2://for old file capability
         point.base |= ROADEDGE_CLEAR;
         break;
     case INTERSECTION:
@@ -478,14 +510,12 @@ Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)
         point.road |= CURB_YES;
         break;
     case TREE:
-    case 5://for old file capability
         point.base |= ROADEDGE_OCCUPIED;
         break;
     case TRUNK:
         point.base |= ROADEDGE_OCCUPIED;
         break;
     case PIT:
-    case 7://for old file capability
         //NOTE: Pits should be treated as OCCUPIED, but I'm not sure for the moment
 //        point.base |= ROADEDGE_OCCUPIED;
         break;
@@ -555,6 +585,7 @@ bool HdlEngine::write3bPng(const std::string fileName, MapType type)
                  << accumMapRange.maxY;
         break;
     }
+#ifdef OFFLINE
     case LOCALMAP:
     {
         cv::Mat img_l(localMap.rows, localMap.cols, CV_8UC3);
@@ -574,6 +605,7 @@ bool HdlEngine::write3bPng(const std::string fileName, MapType type)
                  << localMapRange.maxY;
         break;
     }
+#endif
     default:
         DLOG(FATAL) << "Wrong map type: " << type
                     << ".(inside write3bPng()) Please check out defines.h (enum MapType section) to see valid types.";
@@ -586,6 +618,42 @@ bool HdlEngine::write3bPng(const std::string fileName, MapType type)
 const std::vector<Grid> &HdlEngine::getAccumMap()
 {
     return accumMap;
+}
+
+const Range &HdlEngine::getAccumMapRange()
+{
+    return accumMapRange;
+}
+
+bool HdlEngine::readPointsFromFile()
+{
+    //Firstly, read num of points in current frame.
+    if(!hdlInstream.read((char*)&totalPointsNum, sizeof(totalPointsNum))){
+        //because DLOG(FATAL) will terminate the program immediately. It is no good for timing the program. so
+        //they are commented out during development.
+//        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading total points number "
+//                                                                     "of frame: " << frameProcessed;
+        return false;
+    }
+    //Secondly, read all points into container of raw HDL points
+    if(!hdlInstream.read((char*)rawHdlPoints, sizeof(RawHdlPoint)*totalPointsNum)){
+//        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading the" <<" points "
+//                                                                         "of frame: " << frameProcessed <<" error.";
+        return false;
+    }
+    //Thirdly, read in the carpos of current frame
+    carposeInstream >> currentPose.x >> currentPose.y >> currentPose.eulr;
+    carposes.push_back(currentPose);
+    return true;
+}
+
+bool HdlEngine::readPointsFromShm()
+{
+    //TODO: codes to read points from shared memory
+#ifdef DEBUG
+    return false;
+#endif
+    return true;
 }
 
 
@@ -671,6 +739,8 @@ bool HdlEngine::calcProbability()
     return true;
 }
 
+//Following codes are from XIAO KE, but they are not needed for the moment
+/*
 bool HdlEngine::rayTracing(const Carpose& currentPose)
 {
     //Following codes were inherited from XIAO KE
@@ -894,3 +964,4 @@ unsigned char HdlEngine::p2color(float p)
     return 127;
 }
 
+*/

@@ -31,6 +31,10 @@ struct HdlCorrection
     //for sorting
     int lasersort[LASER_NUM];//Corresponse to original rasersort
     int layermark[LASER_NUM];//usage uncertain
+
+    //blockedByHipAngle is a positive number, just used to indicate the absolute value of the range
+    //This value is a constant
+    const unsigned short blockedByHipAngle;
 };
 
 #endif // HDLCORRECTION_H

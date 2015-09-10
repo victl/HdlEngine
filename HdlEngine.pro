@@ -25,3 +25,4 @@ INCLUDEPATH += /usr/include/opencv \
              /usr/include/opencv2
 CONFIG += c++14
 DEFINES += DEBUG
+DEFINES += OFFLINE
