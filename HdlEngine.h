@@ -13,6 +13,7 @@
 #include <opencv2/opencv.hpp>
 #include <glog/logging.h>
 
+namespace victl {
 
 class HdlEngine
 {
@@ -31,14 +32,18 @@ public /*method*/:
 #endif
 
     bool write3bPng(const std::string fileName = "unamed-map.png", MapType type = LOCALMAP);
+    //The following 3 methods are mainly designed for Wang Shi Yao's programs
     const std::vector<Grid>& getAccumMap();
     const Range& getAccumMapRange();
+    const Carpose& getCurrentPose();
 
 private /*method*/:
     //read points from file
     inline bool readPointsFromFile();
+#ifndef OFFLINE
     //read points from shared memory. This method is used when running online
     inline bool readPointsFromShm();
+#endif
     //XYZs are coordinates of each corresponding rawHdlPoints
     inline bool populateXYZ(RawHdlPoint *rawHdlPoints , HdlPointXYZ* hdlPointXYZs, int totalPointsNum);
     //Get the position of current frame on the global map (origin at Differential Station).
@@ -93,9 +98,11 @@ private:
     //the size of current frame's points
     int totalPointsNum;
     //container for current frame's points, its size is sufficiently large
-    RawHdlPoint rawHdlPoints[MAX_CLOUD_NUM];
+    RawHdlPoint* rawHdlPoints;
     //container for coordinates (XYZs) of current frame's points, its size is sufficiently large
-    HdlPointXYZ hdlPointXYZs[MAX_CLOUD_NUM];
+    HdlPointXYZ* hdlPointXYZs;
+    //container for native hdl points. Used for online recording
+    HdlPoint* hdlPointCloud;
     //car pose of current frame
     Carpose currentPose;
 
@@ -124,4 +131,5 @@ private:
 
 };
 
+}//end namespace victl
 #endif // HDLENGINE_H

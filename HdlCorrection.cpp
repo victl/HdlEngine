@@ -2,6 +2,8 @@
 #include <glog/logging.h>
 #include <cmath>
 
+namespace victl {
+
 HdlCorrection::HdlCorrection(const std::string fileName)
     : blockedByHipAngle(4500)
 {
@@ -55,3 +57,4 @@ HdlCorrection::HdlCorrection(const std::string fileName)
     }
 }
 
+}//end namespace victl

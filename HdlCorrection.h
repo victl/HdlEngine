@@ -4,6 +4,7 @@
 #include <string>
 #include <fstream>
 
+namespace victl {
 
 struct HdlCorrection
 {
@@ -36,5 +37,5 @@ struct HdlCorrection
     //This value is a constant
     const unsigned short blockedByHipAngle;
 };
-
+}//end namespace victl
 #endif // HDLCORRECTION_H

@@ -14,19 +14,19 @@ int main(int argc, char** argv)
     }
         struct timeval start, end;
         gettimeofday(&start, NULL);
-//    for(int i = 0; i < 101; ++i){
-//        hdlEngine.processNextFrame();
-//    }
+////    for(int i = 0; i < 101; ++i){
+////       victl:: hdlEngine.processNextFrame();
+////    }
     int count = 0;
-#ifdef OFFLINE
-    HdlEngine hdlEngine(argv[1]);
+//#ifdef OFFLINE
+    victl::HdlEngine hdlEngine(argv[1]);
     while(hdlEngine.processNextFrame()){++count;}
     hdlEngine.write3bPng("final-3b.png");
     hdlEngine.saveLocalMap("final.png");
-#else
-    HdlEngine hdlEngine;
-    hdlEngine.processNextFrame();
-#endif
+//#else
+//    victl::HdlEngine hdlEngine;
+//    hdlEngine.processNextFrame();
+//#endif
         gettimeofday(&end, NULL);
         long useconds = end.tv_usec - start.tv_usec;
         long seconds  = end.tv_sec  - start.tv_sec;

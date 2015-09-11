@@ -1,5 +1,17 @@
 #include "HdlEngine.h"
 #include <sys/time.h>
+#include <iomanip>
+//if not offline
+#ifndef OFFLINE
+#include <pthread.h>
+#include <cstring>
+#include <cstdlib>
+#include <module/shm.h>
+#include <module/module.h>
+#include <module/types.h>
+#endif
+
+namespace victl {
 
 HdlEngine::HdlEngine()
     : frameProcessedNum(0)
@@ -11,7 +23,9 @@ HdlEngine::HdlEngine()
     , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC1, cv::Scalar(127))
     #endif
 {
-
+    rawHdlPoints = new RawHdlPoint[MAX_CLOUD_NUM];
+    hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_NUM];
+    hdlPointCloud = new HdlPoint[MAX_CLOUD_NUM];
 }
 
 HdlEngine::HdlEngine(const std::string hdlFileName)
@@ -24,6 +38,9 @@ HdlEngine::HdlEngine(const std::string hdlFileName)
     , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC1, cv::Scalar(127))
     #endif
 {
+    rawHdlPoints = new RawHdlPoint[MAX_CLOUD_NUM];
+    hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_NUM];
+    hdlPointCloud = new HdlPoint[MAX_CLOUD_NUM];
     initialize(hdlFileName);
 }
 
@@ -78,9 +95,6 @@ bool HdlEngine::processNextFrame()
     }
 #endif
 
-    //traverse all points, calculate each point's XYZ coordinates
-    populateXYZ(rawHdlPoints, hdlPointXYZs, totalPointsNum);
-
     //Process the dynamic map
 //    Range dynamicMapRange(currentPose, params);
     dynamicMapRange = Range(currentPose, params);
@@ -88,27 +102,31 @@ bool HdlEngine::processNextFrame()
     dynamicMap.resize(dynamicMapRange.maxX * dynamicMapRange.maxY);
     for (int i = 0; i < totalPointsNum; ++i){
         //for convinence, define some tmp variables to represent current point's features:
-        unsigned int distance = rawHdlPoints[i].distance;
-        unsigned short rotAngle = rawHdlPoints[i].rotAngle;
-//        unsigned char intensity = rawHdlPoints[i].intensity;
-//        unsigned char beamId = rawHdlPoints[i].beamId;
+        unsigned int distance = hdlPointCloud[i].distance;
+        unsigned short rotAngle = hdlPointCloud[i].rotAngle;
+//        unsigned char intensity = hdlPointCloud[i].intensity;
+//        unsigned char beamId = hdlPointCloud[i].beamId;
 
         if( distance < 3000 //3 meters
                 && rotAngle > 18000 - correction.blockedByHipAngle  //135 degree
                 && rotAngle < 18000 + correction.blockedByHipAngle //225 degree
                 && hdlPointXYZs[i].z > 0 ) //point height is greater than LiDAR
         {
-            //this point is not useful
+            //means current point is not useful
             continue;
         }
-        int x = hdlPointXYZs[i].x;
-        int y = hdlPointXYZs[i].y;
-        int z = hdlPointXYZs[i].z;
+        int x = hdlPointCloud[i].x;
+        int y = hdlPointCloud[i].y;
+        int z = hdlPointCloud[i].z;
+
+        //the following codes translate hdlpoint's xyz into global coordinates.
+        //NOTE: CURRENT ALGORITHM DIDN'T TAKE PITCH AND ROLL VALUE INTO CONSIDERATION
+        //THIS MIGHT NOT BE RIGHT. WILL BE CONSIDERED IN NEAR FUTURE - 2015-9-10
         double eulr = currentPose.eulr;
         //It seemed that x, y, z are relative coordinate where the origin is the LiDAR, and were measured in millimeter
         //Here, they are translated into meters.
-        float dx =(float) x/1000.0;
-        float dy=(float) y/1000.0;
+        double dx =(double) x/1000.0;
+        double dy=(double) y/1000.0;
 
         //And here, they were transformed into North-East astronomical coordinates
         double cx =dx * cos(eulr) + dy * sin(eulr) + currentPose.x;
@@ -213,8 +231,8 @@ bool HdlEngine::saveFrame(const std::vector<Grid> &frame, int width, int height,
             break;
         }
     }
-    cv::imshow("map of current frame", img);
-    cv::waitKey(80);
+    cv::imshow("Current Map State", img);
+    cv::waitKey(25);
 //    cv::imwrite(name, img);
     return true;
 }
@@ -347,26 +365,26 @@ bool HdlEngine::updateAccumMap()
         }
     }
     //following codes are for debugging
-#ifdef DEBUG
-    if(frameProcessedNum == 300){
-        std::ofstream pointStatics("pointStatics.txt");
-        for(unsigned short x = 0; x < accumMapRange.maxX; ++x)
-        {
-            for(unsigned short y = 0; y < accumMapRange.maxY; ++y)
-            {
-                unsigned short dynamX, dynamY;
+//#ifdef DEBUG
+//    if(frameProcessedNum == 300){
+//        std::ofstream pointStatics("pointStatics.txt");
+//        for(unsigned short x = 0; x < accumMapRange.maxX; ++x)
+//        {
+//            for(unsigned short y = 0; y < accumMapRange.maxY; ++y)
+//            {
+//                unsigned short dynamX, dynamY;
 
-                if(accumMapRange.translate(x, y, dynamicMapRange, dynamX, dynamY))
-                {
-                    int id = y * accumMapRange.maxX + x;
-                    pointStatics << /*std::*/to_string(accumMap.at(id).HitCount) << '\t'
-                                 << /*std::*/to_string(accumMap.at(id).pointNum) << std::endl;
-                }
-            }
-        }
-        pointStatics.close();
-    }
-#endif
+//                if(accumMapRange.translate(x, y, dynamicMapRange, dynamX, dynamY))
+//                {
+//                    int id = y * accumMapRange.maxX + x;
+//                    pointStatics << /*std::*/to_string(accumMap.at(id).HitCount) << '\t'
+//                                 << /*std::*/to_string(accumMap.at(id).pointNum) << std::endl;
+//                }
+//            }
+//        }
+//        pointStatics.close();
+//    }
+//#endif
     //end debug codes
     accumMap = newAccumMap;
     accumMapRange = dynamicMapRange;
@@ -408,7 +426,7 @@ bool HdlEngine::adjustLocalMapSize()
         return false;//means no adjustment needed
     }
 
-    //need expanding
+    //Or else expanding is needed
     Range before(params);
     before = localMapRange;
     cv::Rect rect(0, 0, before.maxX, before.maxY);
@@ -625,6 +643,11 @@ const Range &HdlEngine::getAccumMapRange()
     return accumMapRange;
 }
 
+const Carpose &HdlEngine::getCurrentPose()
+{
+    return currentPose;
+}
+
 bool HdlEngine::readPointsFromFile()
 {
     //Firstly, read num of points in current frame.
@@ -635,26 +658,79 @@ bool HdlEngine::readPointsFromFile()
 //                                                                     "of frame: " << frameProcessed;
         return false;
     }
+
     //Secondly, read all points into container of raw HDL points
-    if(!hdlInstream.read((char*)rawHdlPoints, sizeof(RawHdlPoint)*totalPointsNum)){
-//        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading the" <<" points "
-//                                                                         "of frame: " << frameProcessed <<" error.";
-        return false;
+    //After 2015-9-10, all '.hdl' file will include xyz info, no need to recalculate.
+    //this is a critical file format change. IMPORTANT!!!
+    if(params.Ugv.OldHdlFormat)
+    {
+        if(!hdlInstream.read((char*)rawHdlPoints, sizeof(RawHdlPoint)*totalPointsNum)){
+    //        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading the" <<" points "
+    //                                                                         "of frame: " << frameProcessed <<" error.";
+            return false;
+        }
+
+        //traverse all points, calculate each point's XYZ coordinates
+        populateXYZ(rawHdlPoints, hdlPointXYZs, totalPointsNum);
+        //copy raw hdl point and their xyzs to hdlPointClout
+        for(int i = 0; i < totalPointsNum; ++i)
+        {
+            hdlPointCloud[i].beamId = rawHdlPoints[i].beamId;
+            hdlPointCloud[i].distance = rawHdlPoints[i].distance;
+            hdlPointCloud[i].intensity = rawHdlPoints[i].intensity;
+            hdlPointCloud[i].rotAngle = rawHdlPoints[i].rotAngle;
+            hdlPointCloud[i].x = hdlPointXYZs[i].x;
+            hdlPointCloud[i].y = hdlPointXYZs[i].y;
+            hdlPointCloud[i].z = hdlPointXYZs[i].z;
+        }
+
+        //Thirdly, read in the carpos of current frame
+        carposeInstream >> currentPose.x >> currentPose.y >> currentPose.eulr;
+        carposes.push_back(currentPose);
     }
-    //Thirdly, read in the carpos of current frame
-    carposeInstream >> currentPose.x >> currentPose.y >> currentPose.eulr;
-    carposes.push_back(currentPose);
+    else{
+        if(!hdlInstream.read((char*)hdlPointCloud, sizeof(HdlPoint)*totalPointsNum)){
+    //        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading the" <<" points "
+    //                                                                         "of frame: " << frameProcessed <<" error.";
+            return false;
+        }
+        //Thirdly, read in the carpos of current frame
+        carposeInstream >> currentPose.x >> currentPose.y >> currentPose.eulr >> currentPose.roll >> currentPose.pitch;
+        carposes.push_back(currentPose);
+    }
+
     return true;
 }
 
+#ifndef OFFLINE
 bool HdlEngine::readPointsFromShm()
 {
-    //TODO: codes to read points from shared memory
-#ifdef DEBUG
+    //This function should not be used when running offline
+#ifdef OFFLINE
     return false;
 #endif
+    MetaData shm;
+    //1. get carpose
+    shm.type = module::MetaData::META_NAVIGATION;
+    SHARED_OBJECTS.GetMetaData(&shm);
+    currentPose.x = shm.value.v_navi.ENU[0];
+    currentPose.y = shm.value.v_navi.ENU[1];
+    currentPose.roll = shm.value.v_navi.Eulr[0];//俯仰角
+    currentPose.pitch = shm.value.v_navi.Eulr[1];//滚转角
+    currentPose.eulr = shm.value.v_navi.Eulr[2];//方位角
+
+    //2. get hdl points
+    shm.type = module::MetaData::META_LASER_HDL;
+    SHARED_OBJECTS.GetMetaData(&shm);
+    totalPointsNum = shm.value.v_laserHdl.pts_count;
+    memcpy(hdlPointCloud, shm.value.v_laserHdl.pts, sizeof(HdlPoint) * totalPointsNum);
+
+    //3.push currentPose into carposes
+    carposes.push_back(currentPose);
+
     return true;
 }
+#endif
 
 
 bool HdlEngine::populateXYZ(RawHdlPoint *rawHdlPoints , HdlPointXYZ *hdlPointXYZs, int totalPointsNum)
@@ -979,3 +1055,4 @@ unsigned char HdlEngine::p2color(float p)
 }
 
 */
+}//end namespace victl
