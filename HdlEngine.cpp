@@ -18,14 +18,15 @@ HdlEngine::HdlEngine()
     , correction(params.Ugv.CorrectionFile)
     , dynamicMapRange(params)
     , accumMapRange(params)
-    #ifdef OFFLINE
     , localMapRange(params)
-    , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC1, cv::Scalar(127))
-    #endif
+    , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC3, cv::Scalar(0,0,0))
 {
     rawHdlPoints = new RawHdlPoint[MAX_CLOUD_NUM];
     hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_NUM];
     hdlPointCloud = new HdlPoint[MAX_CLOUD_NUM];
+    lpts = new SimpleCarpose[params.Hdl.MaxCP];
+    rpts = new SimpleCarpose[params.Hdl.MaxCP];
+    spts = new SimpleCarpose[params.Hdl.MaxCP];
 }
 
 HdlEngine::HdlEngine(const std::string hdlFileName)
@@ -33,21 +34,22 @@ HdlEngine::HdlEngine(const std::string hdlFileName)
     , correction(params.Ugv.CorrectionFile)
     , dynamicMapRange(params)
     , accumMapRange(params)
-    #ifdef OFFLINE
     , localMapRange(params)
-    , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC1, cv::Scalar(127))
-    #endif
+    , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC3, cv::Scalar(0,0,0))
 {
     rawHdlPoints = new RawHdlPoint[MAX_CLOUD_NUM];
     hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_NUM];
     hdlPointCloud = new HdlPoint[MAX_CLOUD_NUM];
+    lpts = new SimpleCarpose[params.Hdl.MaxCP];
+    rpts = new SimpleCarpose[params.Hdl.MaxCP];
+    spts = new SimpleCarpose[params.Hdl.MaxCP];
     initialize(hdlFileName);
 }
 
 HdlEngine::~HdlEngine()
 {
-    hdlInstream.is_open() ? hdlInstream.close(),NULL:NULL;
-    carposeInstream.is_open() ? carposeInstream.close(),NULL:NULL;
+    hdlReader.is_open() ? hdlReader.close(),NULL:NULL;
+    carposeReader.is_open() ? carposeReader.close(),NULL:NULL;
 }
 
 bool HdlEngine::initialize(const std::string hdlFileName)
@@ -58,21 +60,26 @@ bool HdlEngine::initialize(const std::string hdlFileName)
         return false;
     }
     baseFileName = hdlFileName.substr(0,hdlFileName.size() - 4);
-    hdlInstream.is_open() ? hdlInstream.close(), hdlInstream.open(hdlFileName.c_str(), std::ios::binary) : hdlInstream.open(hdlFileName.c_str(), std::ios::binary);
-    carposeInstream.is_open() ? carposeInstream.close(), carposeInstream.open((baseFileName+".hdl_dgps").c_str()) : carposeInstream.open((baseFileName+".hdl_dgps").c_str());
-    if(!hdlInstream){
+    hdlReader.is_open() ? hdlReader.close(), hdlReader.open(hdlFileName.c_str(), std::ios::binary) : hdlReader.open(hdlFileName.c_str(), std::ios::binary);
+    carposeReader.is_open() ? carposeReader.close(), carposeReader.open((baseFileName+".carposes").c_str()) : carposeReader.open((baseFileName+".carposes").c_str());
+    cameraPointReader.is_open() ? cameraPointReader.close(), cameraPointReader.open((baseFileName+".camerapoints").c_str(), std::ios::binary) : cameraPointReader.open((baseFileName+".camerapoints").c_str());
+    if(!hdlReader){
         DLOG(FATAL)  << "Error reading HDL file: " << hdlFileName << "\nFile not exist or you don't have "
                                                                      "permission to access it.";
     }
-    if(!carposeInstream){
-        DLOG(FATAL)  << "Error reading hdl_dgps file: " << hdlFileName << "\nFile not exist or you don't have "
+    if(!carposeReader){
+        DLOG(FATAL)  << "Error reading car poses file: " << baseFileName + ".carposes" << "\nFile not exist or you don't have "
+                                                                          "permission to access it.";
+    }
+    if(!cameraPointReader){
+        DLOG(FATAL)  << "Error reading camera points file: " << baseFileName + ".camerapoints" << "\nFile not exist or you don't have "
                                                                           "permission to access it.";
     }
     //we resize those maps to 0 first, so each map is guaranteed to be re-initialized to default value (0s)
     dynamicMap.resize(0);dynamicMap.resize(params.Scale.Width*params.Scale.Width);
     accumMap.resize(0);accumMap.resize(params.Scale.Width*params.Scale.Width);
     //hdlInstream && carposInstream must be opened properly, so set them as return value
-    return hdlInstream && carposeInstream;
+    return hdlReader && carposeReader && cameraPointReader;
 }
 
 bool HdlEngine::processNextFrame()
@@ -134,11 +141,10 @@ bool HdlEngine::processNextFrame()
 
         //change to local coordinate. (this will change cx, cy. because they are pass as reference)
         //if the point falls out of the detecting range (toLocal returns false), we ignore current point
-        if(!dynamicMapRange.toLocal(cx, cy)){
+        int col, row;
+        if(!dynamicMapRange.toLocal(cx, cy, col, row)){
             continue;
         }
-        unsigned short col = cx;
-        unsigned short row = cy;
 
 
         int id = row * dynamicMapRange.maxX + col;
@@ -178,26 +184,30 @@ bool HdlEngine::processNextFrame()
     calcProbability();
 //    rayTracing(currentPose);
     updateAccumMap();
-#ifdef OFFLINE
-    updateLocalMap();
-#endif
+    if(params.Hdl.RecordLocalMap)
+    {
+        updateLocalMap();
+    }
+
 #ifdef DEBUG
-    if(params.LocalMap.SaveNeeded.count(frameProcessedNum)
-            || (params.LocalMap.SaveInterval != 0 && frameProcessedNum % params.LocalMap.SaveInterval == 0) ){
+    if( (params.LocalMap.SaveInterval != 0 && frameProcessedNum % params.LocalMap.SaveInterval == 0) ){
         DLOG(INFO) << "Saving  map...";
         std::string  /*dynamicMapFileName("dynamicmap-"), */accumMapFileName("accummap-");
 //        dynamicMapFileName += std::to_string(frameProcessedNum) + ".png";
         accumMapFileName += /*std::*/to_string(frameProcessedNum) + ".png";
 //        saveFrame(dynamicMap, dynamicMapRange.maxX, dynamicMapRange.maxY, dynamicMapFileName);
         saveFrame(accumMap, accumMapRange.maxX, accumMapRange.maxY, accumMapFileName);
-#ifdef OFFLINE
-//        std::string localMapFileName("localmap-"), localMap3bFileName("localmap-3b-");
-//        localMapFileName += std::to_string(frameProcessedNum) + ".png";
-//        localMap3bFileName += std::to_string(frameProcessedNum) + ".png";
-//        saveLocalMap(localMapFileName);
-//        write3bPng(localMap3bFileName);
-//        visualLocalMap("visualLocalMap.png");
-#endif
+        if(params.Hdl.RecordLocalMap)
+        {
+            if(params.LocalMap.SaveNeeded.count(frameProcessedNum)){
+                std::string localMapFileName("localmap-"), localMap3bFileName("localmap-3b-");
+                localMapFileName += to_string(frameProcessedNum) + ".png";
+                localMap3bFileName += to_string(frameProcessedNum) + ".png";
+                saveLocalMap(localMapFileName);
+//                write3bPng(localMap3bFileName);//NOTE: After re-designing of the local map storage, write3bpng() now has the same effect of saveLocalMap()
+                visualLocalMap(localMapFileName);
+            }
+        }
     }
 #endif
 
@@ -220,7 +230,7 @@ bool HdlEngine::saveFrame(const std::vector<Grid> &frame, int width, int height,
 //            img.at<uchar>(row, col) = 0;
 ////            DLOG(INFO) << "Occupied: " <<frame.at(i).pointNum;
 //        }
-        switch (frame.at(i).type) {
+        switch (frame.at(i).o) {
         case OCCUPIED:
             img.at<uchar>(row, col) = 0;
             break;
@@ -237,21 +247,37 @@ bool HdlEngine::saveFrame(const std::vector<Grid> &frame, int width, int height,
     return true;
 }
 
-#ifdef OFFLINE
 bool HdlEngine::visualLocalMap(const std::string &name)
 {
-    cv::Mat img(localMap.rows, localMap.cols, CV_8UC1, cv::Scalar(127));
+    cv::Mat img(localMap.rows, localMap.cols, CV_8UC3, cv::Scalar(127,127,127));
     for(int col = 0; col < img.cols; ++col)
     {
         for(int row = 0; row < img.rows; ++row)
         {
-            if(localMap.at<unsigned char>(row, col) == OCCUPIED)
+            unsigned char base = localMap.at<cv::Vec3b>(row, col)[0];
+            if(isPresent(base, ROADEDGE_OCCUPIED))
             {
-                img.at<unsigned char>(row, col) = 0;
+                img.at<cv::Vec3b>(row, col) = cv::Vec3b(0,0,0);
             }
-            else if(localMap.at<unsigned char>(row, col) == CLEAR) {
-                img.at<unsigned char>(row, col) = 255;
+            else if(isPresent(base, ROADEDGE_CLEAR)) {
+                img.at<cv::Vec3b>(row, col) = cv::Vec3b(255,255,255);
             }
+            if (isPresent(base, LANELINE_CAMERA))
+            {
+                img.at<cv::Vec3b>(row, col) = cv::Vec3b(0,255,0);
+            }
+            if (isPresent(base, STOPLINE_YES))
+            {
+                img.at<cv::Vec3b>(row, col) = cv::Vec3b(0,0,255);
+            }
+        }
+    }
+    for( size_t i = 0; i < carposes.size(); ++i)
+    {
+        int x,y;
+        if( localMapRange.toLocal(carposes[i].x, carposes[i].y, x, y) )
+        {
+            img.at<cv::Vec3b>(img.rows - y -1, x) = cv::Vec3b(244,18,220) ;
         }
     }
     cv::imwrite(name, img);
@@ -262,17 +288,16 @@ void HdlEngine::saveLocalMap(const std::string name)
 {
     cv::imwrite(name, localMap);
 }
-#endif
 
 bool HdlEngine::updateAccumMap()
 {
     std::vector<Grid> newAccumMap(dynamicMapRange.maxX * dynamicMapRange.maxY);
-    for(unsigned short x = 0; x < dynamicMapRange.maxX; ++x)
+    for(int x = 0; x < dynamicMapRange.maxX; ++x)
     {
-        for(unsigned short y = 0; y < dynamicMapRange.maxY; ++y)
+        for(int y = 0; y < dynamicMapRange.maxY; ++y)
         {
             int id = y * dynamicMapRange.maxX + x;
-            unsigned short accumX, accumY;
+            int accumX, accumY;
 
             if(dynamicMapRange.translate(x, y, accumMapRange, accumX, accumY))
             {
@@ -356,11 +381,11 @@ bool HdlEngine::updateAccumMap()
 //            }
             if(newAccumMap.at(id).HitCount >= params.ProbMap.OccupiedThreshold)
             {
-                newAccumMap.at(id).type = OCCUPIED;
+                newAccumMap.at(id).o = OCCUPIED;
             }
-            else if(newAccumMap[id].type != OCCUPIED && newAccumMap[id].pointNum)
+            else if(newAccumMap[id].o != OCCUPIED && newAccumMap[id].pointNum)
             {
-                newAccumMap[id].type = CLEAR;
+                newAccumMap[id].o = CLEAR;
             }
         }
     }
@@ -391,7 +416,6 @@ bool HdlEngine::updateAccumMap()
     return true;
 }
 
-#ifdef OFFLINE
 bool HdlEngine::updateLocalMap()
 {
     //if the first time to update
@@ -404,7 +428,7 @@ bool HdlEngine::updateLocalMap()
         localMapRange.update();
     }
     adjustLocalMapSize();
-    unsigned short localX, localY;
+    int localX, localY;
     if(!accumMapRange.translate(0, accumMapRange.maxY - 1, localMapRange, localX, localY))
     {
         DLOG(INFO) << "Out of range: (localX, localY) : " << localX << '\t' << localY
@@ -449,7 +473,7 @@ bool HdlEngine::adjustLocalMapSize()
         rect.y = params.LocalMap.ExpandUnit * params.Scale.yScale;
     }
     localMapRange.update();
-    cv::Mat newLocalMap(localMapRange.maxY, localMapRange.maxX, CV_8UC1, cv::Scalar(127));
+    cv::Mat newLocalMap(localMapRange.maxY, localMapRange.maxX, CV_8UC3, cv::Scalar(0,0,0));
     cv::Mat oldRegion(newLocalMap, rect);
     localMap.copyTo(oldRegion);
     localMap = newLocalMap;
@@ -462,59 +486,85 @@ bool HdlEngine::updateRegion(cv::Mat region, const std::vector<Grid> &accumMap)
     {
         for(unsigned short y = 0; y < accumMapRange.maxY; ++y)
         {
-            if(region.at<unsigned char>(region.rows - y -1, x) ==OCCUPIED)
-                continue;
             int id = y * dynamicMapRange.maxX + x;
-            if(accumMap.at(id).p > 0.5 || accumMap.at(id).type == OCCUPIED)
-            {
-                writeOnMat(region, x, y, OCCUPIED);
-            }
-            else if(accumMap.at(id).p < 0.5 || accumMap.at(id).type == CLEAR)
-            {
-                writeOnMat(region, x, y, CLEAR);
-            }
-//            else
-//            {
-//                writeOnMat(region, x, y, UNKNOWN);
-//            }
+            writeOnMat(region, x, y, accumMap.at(id).a);
+            writeOnMat(region, x, y, accumMap.at(id).o);
         }
     }
     return true;
 }
-#endif
 
 bool HdlEngine::writeOnMat(cv::Mat mat, int x, int y, unsigned char value)
 {
-    mat.at<unsigned char>(mat.rows - y -1, x) = value;
+//    mat.at<unsigned char>(mat.rows - y -1, x) = value;
+    switch (value) {
+    case OCCUPIED:
+        mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= ROADEDGE_OCCUPIED;
+        break;
+    case CLEAR:
+        if( (mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] & ROADEDGE_OCCUPIED) != ROADEDGE_OCCUPIED)
+            mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= ROADEDGE_CLEAR;
+        break;
+    case CAMERALANELINE:
+        mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= LANELINE_CAMERA;
+        mat.at<cv::Vec3b>(mat.rows - y -1, x)[1] |= 255;//this line is for visualize, do not use in production env
+        break;
+    case CAMERASTOPLINE:
+        mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= STOPLINE_YES;
+        mat.at<cv::Vec3b>(mat.rows - y -1, x)[2] |= 255;//this line is for visualize, do not use in production env
+        break;
+    case CAMERALSINTERSECT:
+        mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= LANELINE_CAMERA;
+        mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= STOPLINE_YES;
+        break;
+    default:
+        break;
+    }
     return true;
 }
 
 Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)
 {
     Point3B point;
-    unsigned char value;
+    unsigned char a;
+    unsigned char o;
     //for dynamic map and accumulated map, we use vector access. For local map, cv::Mat access method is used
     switch (type) {
     case DYNAMICMAP:
-        value = dynamicMap.at( yy * dynamicMapRange.maxX + xx ).type;
+        o = dynamicMap.at( yy * dynamicMapRange.maxX + xx ).o;
+        a = dynamicMap.at( yy * dynamicMapRange.maxX + xx ).a;
         break;
     case ACCUMMAP:
-        value = accumMap.at( yy * accumMapRange.maxX + xx ).type;
+        o = accumMap.at( yy * accumMapRange.maxX + xx ).o;
+        a = accumMap.at( yy * accumMapRange.maxX + xx ).a;
         break;
-#ifdef OFFLINE
+        //after the local map had switched from 1channel to 3channel, the content of local map grid is already of type 'Point3B'
+//#ifdef OFFLINE
+//    case LOCALMAP:
+//        value = localMap.at<unsigned char>( localMap.rows - yy - 1, xx);
+//        break;
+//#endif
     case LOCALMAP:
-        value = localMap.at<unsigned char>( localMap.rows - yy - 1, xx);
+    {
+        cv::Vec3b v3 = localMap.at<cv::Vec3b>(localMap.rows - yy -1, xx);
+        point.base = v3[0];
+        point.road = v3[1];
+        point.sig = v3[2];
         break;
-#endif
+    }
     default:
         DLOG(FATAL) << "Wrong map type: " << type
                     << ".(inside get3b()) Please check out defines.h (enum MapType section) to see valid types.";
         break;
     }
 
-    switch (value) {
+    if(LOCALMAP == type)
+    {
+        return point;
+    }
+    switch (a) {
     case LANELINE:
-        point.base |= (ROADEDGE_CLEAR | LANELINE_DOTTED);
+        point.base |= (ROADEDGE_CLEAR | LANELINE_HDL);
         break;
     case ZEBRA:
         point.base |= ROADEDGE_CLEAR;
@@ -544,15 +594,27 @@ Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)
         point.base |= ROADEDGE_OCCUPIED;
         //type of traffic signs will be added in the future
         break;
-    case UNKNOWN:
-        point.base |= ROADEDGE_UNKNOWN;
+        //CAMERA... were added after 3b format definition version 2. might be called version 2.1
+    case CAMERALANELINE:
+        point.base |= LANELINE_CAMERA;
         break;
-    case CLEAR:
-        point.base |= ROADEDGE_CLEAR;
+    case CAMERASTOPLINE:
+        point.base |= STOPLINE_YES;
         break;
-    case OCCUPIED:
-        point.base |= ROADEDGE_OCCUPIED;
+    case CAMERALSINTERSECT:
+        point.base |= LANELINE_CAMERA;
+        point.base |= STOPLINE_YES;
         break;
+        //after the local map had switched from 1channel to 3channel, the content of local map grid is already of type 'Point3B'
+//    case AUNKNOWN:
+//        point.base |= ROADEDGE_UNKNOWN;
+//        break;
+//    case CLEAR:
+//        point.base |= ROADEDGE_CLEAR;
+//        break;
+//    case OCCUPIED:
+//        point.base |= ROADEDGE_OCCUPIED;
+//        break;
     default:
         point.base |= ROADEDGE_UNKNOWN;
         break;
@@ -560,6 +622,16 @@ Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)
 //    if(point.base&ROADEDGE_CLEAR == ROADEDGE_CLEAR){
 //        DLOG(INFO)<<"CLEAR POINT: ("<<xx<<", "<<yy<<")";
 //    }
+    switch (o) {
+    case OCCUPIED:
+        point.base |= ROADEDGE_OCCUPIED;
+        break;
+    case CLEAR:
+        point.base |= ROADEDGE_CLEAR;
+        break;
+    default:
+        break;
+    }
     return point;
 }
 
@@ -603,19 +675,18 @@ bool HdlEngine::write3bPng(const std::string fileName, MapType type)
                  << accumMapRange.maxY;
         break;
     }
-#ifdef OFFLINE
     case LOCALMAP:
     {
-        cv::Mat img_l(localMap.rows, localMap.cols, CV_8UC3);
-        for(int x = 0; x < img_l.cols; ++x)
-        {
-            for(int y = 0; y < img_l.rows; ++y)
-            {
-                Point3B pt = get3b(x, y, LOCALMAP);
-                img_l.at<cv::Vec3b>(img_l.rows - y - 1, x) = cv::Vec3b(pt.base, pt.road, pt.sig);
-            }
-        }
-        cv::imwrite(fileName, img_l);
+//        cv::Mat img_l(localMap.rows, localMap.cols, CV_8UC3);
+//        for(int x = 0; x < img_l.cols; ++x)
+//        {
+//            for(int y = 0; y < img_l.rows; ++y)
+//            {
+//                Point3B pt = get3b(x, y, LOCALMAP);
+//                img_l.at<cv::Vec3b>(img_l.rows - y - 1, x) = cv::Vec3b(pt.base, pt.road, pt.sig);
+//            }
+//        }
+        cv::imwrite(fileName, localMap);
         osHeader << (localMapRange.right + localMapRange.left) / 2 << '\t'
                  << (localMapRange.top + localMapRange.bottom) / 2
                  << std::endl
@@ -623,7 +694,6 @@ bool HdlEngine::write3bPng(const std::string fileName, MapType type)
                  << localMapRange.maxY;
         break;
     }
-#endif
     default:
         DLOG(FATAL) << "Wrong map type: " << type
                     << ".(inside write3bPng()) Please check out defines.h (enum MapType section) to see valid types.";
@@ -651,20 +721,24 @@ const Carpose &HdlEngine::getCurrentPose()
 bool HdlEngine::readPointsFromFile()
 {
     //Firstly, read num of points in current frame.
-    if(!hdlInstream.read((char*)&totalPointsNum, sizeof(totalPointsNum))){
+    if(!hdlReader.read((char*)&totalPointsNum, sizeof(totalPointsNum))){
         //because DLOG(FATAL) will terminate the program immediately. It is no good for timing the program. so
         //they are commented out during development.
 //        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading total points number "
 //                                                                     "of frame: " << frameProcessed;
         return false;
     }
+#ifdef DEBUG
+//    DLOG(INFO) << "Total point number: " << totalPointsNum;
+#endif
 
     //Secondly, read all points into container of raw HDL points
     //After 2015-9-10, all '.hdl' file will include xyz info, no need to recalculate.
     //this is a critical file format change. IMPORTANT!!!
-    if(params.Ugv.OldHdlFormat)
+    switch(params.Hdl.HdlVersion)
     {
-        if(!hdlInstream.read((char*)rawHdlPoints, sizeof(RawHdlPoint)*totalPointsNum)){
+    case 1:
+        if(!hdlReader.read((char*)rawHdlPoints, sizeof(RawHdlPoint)*totalPointsNum)){
     //        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading the" <<" points "
     //                                                                         "of frame: " << frameProcessed <<" error.";
             return false;
@@ -685,17 +759,17 @@ bool HdlEngine::readPointsFromFile()
         }
 
         //Thirdly, read in the carpos of current frame
-        carposeInstream >> currentPose.x >> currentPose.y >> currentPose.eulr;
+        carposeReader >> currentPose.x >> currentPose.y >> currentPose.eulr;
         carposes.push_back(currentPose);
-    }
-    else{
-        if(!hdlInstream.read((char*)hdlPointCloud, sizeof(HdlPoint)*totalPointsNum)){
+
+    case 2:
+        if(!hdlReader.read((char*)hdlPointCloud, sizeof(HdlPoint)*totalPointsNum)){
     //        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading the" <<" points "
     //                                                                         "of frame: " << frameProcessed <<" error.";
             return false;
         }
-        //Thirdly, read in the carpos of current frame
-        carposeInstream >> currentPose.x >> currentPose.y >> currentPose.eulr >> currentPose.roll >> currentPose.pitch;
+        //Read in the carpose of current frame
+        carposeReader >> currentPose.x >> currentPose.y >> currentPose.eulr >> currentPose.roll >> currentPose.pitch;
         carposes.push_back(currentPose);
     }
 
@@ -706,9 +780,7 @@ bool HdlEngine::readPointsFromFile()
 bool HdlEngine::readPointsFromShm()
 {
     //This function should not be used when running offline
-#ifdef OFFLINE
-    return false;
-#endif
+
     MetaData shm;
     //1. get carpose
     shm.type = module::MetaData::META_NAVIGATION;
@@ -750,7 +822,7 @@ bool HdlEngine::populateXYZ(RawHdlPoint *rawHdlPoints , HdlPointXYZ *hdlPointXYZ
         // is the rotation angle adjusted (plus) by correction.rotAngle.
         float cos_theta = correction.cos_raw[rotAngle] * correction.cos_rotAngle[beamId] + correction.sin_raw[rotAngle] * correction.sin_rotAngle[beamId];
         float sin_theta = correction.sin_raw[rotAngle] * correction.cos_rotAngle[beamId] - correction.cos_raw[rotAngle] * correction.sin_rotAngle[beamId];
-        float r_measure = distance * 2.0f;//why multiplying 2 is unclear for Zou
+        float r_measure = distance * 2.0f;//multiplying 2 is because the unit length of distance is 2mm instead of 1mm
         //Here, all 'r_...' refer to the direct distance between LiDAR and the reflect point
         //this distance need not be horizontal. Instead, it might have a vertical angle
         float r_adjusted = r_measure + correction.dist[beamId];
@@ -817,7 +889,7 @@ bool HdlEngine::calcProbability()
         {
             dynamicMap.at(i).p = 0.5 + n * params.ProbMap.incrementUnit;
             dynamicMap.at(i).p > 1 ? dynamicMap.at(i).p = 1 : 0;
-            dynamicMap.at(i).type = OCCUPIED;
+//            dynamicMap.at(i).o = OCCUPIED;
             dynamicMap.at(i).HitCount = 1;
 #ifdef MOREDETAILS
             if(dynamicMap.at(i).p > 0.5)
@@ -825,6 +897,56 @@ bool HdlEngine::calcProbability()
 #endif
         }
     }//end for(sizt_t i)
+
+    //Since version 2, camera points well added
+    if(params.Hdl.HdlVersion > 1)
+    {
+        //Here, l..., r..., s... represent left lanemark, right lanemark, stopline
+        bool lValid, rValid, sValid;
+        int lnum, rnum, snum;
+        cameraPointReader.read((char*)&lValid, sizeof(lValid));
+        cameraPointReader.read((char*)&rValid, sizeof(rValid));
+        cameraPointReader.read((char*)&sValid, sizeof(sValid));
+        if(lValid)
+        {
+            cameraPointReader.read((char*)&lnum, sizeof(lnum));
+            cameraPointReader.read((char*)lpts, sizeof(SimpleCarpose) * lnum);
+            for(int i = 0; i < lnum; ++i)
+            {
+                int x,y;
+                if(dynamicMapRange.toLocal(lpts[i].x, lpts[i].y, x, y))
+                {
+                    dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALANELINE;
+                }
+            }
+        }
+        if(rValid)
+        {
+            cameraPointReader.read((char*)&rnum, sizeof(rnum));
+            cameraPointReader.read((char*)rpts, sizeof(SimpleCarpose) * rnum);
+            for(int i = 0; i < rnum; ++i)
+            {
+                int x,y;
+                if(dynamicMapRange.toLocal(rpts[i].x, rpts[i].y, x, y))
+                {
+                    dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALANELINE;
+                }
+            }
+        }
+        if(sValid)
+        {
+            cameraPointReader.read((char*)&snum, sizeof(snum));
+            cameraPointReader.read((char*)spts, sizeof(SimpleCarpose) * snum);
+            for(int i = 0; i < snum; ++i)
+            {
+                int x,y;
+                if(dynamicMapRange.toLocal(spts[i].x, spts[i].y, x, y))
+                {
+                    dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERASTOPLINE;
+                }
+            }
+        }
+    }
 
     return true;
 }

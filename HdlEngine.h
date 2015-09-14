@@ -13,6 +13,7 @@
 #include <opencv2/opencv.hpp>
 #include <glog/logging.h>
 
+
 namespace victl {
 
 class HdlEngine
@@ -88,9 +89,10 @@ private:
     //file name without file type extension, can be used to refer to .hdl, .dgps etc after appending file name extension.
     std::string baseFileName;
 
-    //input stream for handling hdl file and hdl_dgps file
-    std::ifstream hdlInstream;
-    std::ifstream carposeInstream;
+    //input stream for handling hdl file and carpose file
+    std::ifstream hdlReader;
+    std::ifstream carposeReader;
+    std::ifstream cameraPointReader;
 
     //LiDAR correction parameters. will be read from a txt file by initialize with that file
     HdlCorrection correction;
@@ -105,6 +107,11 @@ private:
     HdlPoint* hdlPointCloud;
     //car pose of current frame
     Carpose currentPose;
+
+    ////Here, l..., r..., s... represent left lanemark, right lanemark, stopline points
+    SimpleCarpose* lpts;
+    SimpleCarpose* rpts;
+    SimpleCarpose* spts;
 
     //the counter to record how many frame have been processed, and indicate next frame's number
     size_t frameProcessedNum;

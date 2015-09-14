@@ -19,10 +19,13 @@ HEADERS += \
     HdlCorrection.h
 
 LIBS += `pkg-config opencv --cflags --libs` \
-    -lglog
+        -lglog\
+       -lboost_system\
+       -lboost_thread
 
 INCLUDEPATH += /usr/include/opencv \
-             /usr/include/opencv2
+             /usr/include/opencv2 \
+            /home/victor/workspace/zoulu
 DEFINES += DEBUG
 DEFINES += OFFLINE
 
