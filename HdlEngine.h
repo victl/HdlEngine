@@ -8,18 +8,21 @@
 #include <map>
 #include <iostream>
 #include <fstream>
-#include <opencv/cv.h>
-#include <opencv/cv.hpp>
 #include <opencv2/opencv.hpp>
 #include <glog/logging.h>
 
+#define DEBUG
 
 namespace victl {
 
 class HdlEngine
 {
 public /*method*/:
+    //if running online, initialize an instance of this class with empty parameter list
     explicit HdlEngine();
+    //if running offline, initialize it with a HDL file pathname.
+    //It is assumed that other related files ( like '.carposes', '.camerapoints' etc. ) were stored in the same dir with the '.hdl' file
+    //don't break this rule.
     HdlEngine(const std::string hdlFileName);
     ~HdlEngine();
     bool initialize(const std::string hdlFileName);
@@ -27,10 +30,10 @@ public /*method*/:
 
     //following two functions are mainly used for debuging
     bool saveFrame(const std::vector<Grid>& frame, int width, int height, const std::string& name);
-#ifdef OFFLINE
     bool visualLocalMap(const std::string& name);
+
     void saveLocalMap(const std::string name);
-#endif
+
 
     bool write3bPng(const std::string fileName = "unamed-map.png", MapType type = LOCALMAP);
     //The following 3 methods are mainly designed for Wang Shi Yao's programs
@@ -66,30 +69,29 @@ private /*method*/:
     //update accumulated map
     inline bool updateAccumMap();
 
-#ifdef OFFLINE
+
     //update local map
     inline bool updateLocalMap();
-    //prepare local map. If current local map does not contain current accumulated map, expand it
+    //prepare local map. If current accumulated map can't fit into current local map, expand the local map
     inline bool adjustLocalMapSize();
     //update the corresponding region of local map with accumulated map
     inline bool updateRegion(cv::Mat region, const std::vector<Grid>& accumMap);
 
     //write value to cv::Mat. We need this function because OpenCV treat top-left as origin
-#endif
-    //while our coordinate's orignin is on bottom-left
+    //while our coordinate system's orignin is on bottom-left
     inline bool writeOnMat(cv::Mat mat, int x, int y, unsigned char value);
 
-    //3b format input & output
+    //for 3b format input & output
     inline Point3B get3b(unsigned short xx, unsigned short yy, MapType type);
 
 private:
-    //configuration object:
+    //configuration parameters object:
     UgvParam params;
 
     //file name without file type extension, can be used to refer to .hdl, .dgps etc after appending file name extension.
     std::string baseFileName;
 
-    //input stream for handling hdl file and carpose file
+    //input stream for handling hdl file and carpose file, etc.
     std::ifstream hdlReader;
     std::ifstream carposeReader;
     std::ifstream cameraPointReader;
@@ -104,11 +106,15 @@ private:
     //container for coordinates (XYZs) of current frame's points, its size is sufficiently large
     HdlPointXYZ* hdlPointXYZs;
     //container for native hdl points. Used for online recording
+    //and since 2015-9-10, offline data were also stored in this format.
     HdlPoint* hdlPointCloud;
     //car pose of current frame
     Carpose currentPose;
 
-    ////Here, l..., r..., s... represent left lanemark, right lanemark, stopline points
+    ////Here, l..., r..., s... represent left lanemark, right lanemark, stopline points from camera vision.
+    /// provided by Liu Xiao Long, via shared memory.
+    bool lValid, rValid, sValid;
+    int lnum, rnum, snum;
     SimpleCarpose* lpts;
     SimpleCarpose* rpts;
     SimpleCarpose* spts;
@@ -129,12 +135,11 @@ private:
     //the range of accumulated map.
     Range accumMapRange;
 
-#ifdef OFFLINE
     //local map
     cv::Mat localMap;
     //the range of local map
     Range localMapRange;
-#endif
+
 
 };
 

@@ -21,11 +21,11 @@ int main(int argc, char** argv)
 //#ifdef OFFLINE
     victl::HdlEngine hdlEngine(argv[1]);
     while(hdlEngine.processNextFrame()){++count;}
-    hdlEngine.write3bPng("final-3b.png");
-    hdlEngine.saveLocalMap("final.png");
+    hdlEngine.write3bPng("map_tmp/final-3b.png");
+    hdlEngine.visualLocalMap("map_tmp/visualized-final.png");
 //#else
-//    victl::HdlEngine hdlEngine;
-//    hdlEngine.processNextFrame();
+    //victl::HdlEngine hdlEngine;
+    //hdlEngine.processNextFrame();
 //#endif
         gettimeofday(&end, NULL);
         long useconds = end.tv_usec - start.tv_usec;

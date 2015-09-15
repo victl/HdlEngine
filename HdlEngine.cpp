@@ -11,35 +11,42 @@
 #include <module/types.h>
 #endif
 
+#ifndef OFFLINE
+using namespace module;
+using namespace module::shm;
+#endif
+
 namespace victl {
 
 HdlEngine::HdlEngine()
-    : frameProcessedNum(0)
+    : params()
+	, frameProcessedNum(0)
     , correction(params.Ugv.CorrectionFile)
     , dynamicMapRange(params)
     , accumMapRange(params)
     , localMapRange(params)
     , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC3, cv::Scalar(0,0,0))
 {
-    rawHdlPoints = new RawHdlPoint[MAX_CLOUD_NUM];
-    hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_NUM];
-    hdlPointCloud = new HdlPoint[MAX_CLOUD_NUM];
+    rawHdlPoints = new RawHdlPoint[MAX_CLOUD_SIZE];
+    hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_SIZE];
+    hdlPointCloud = new HdlPoint[MAX_CLOUD_SIZE];
     lpts = new SimpleCarpose[params.Hdl.MaxCP];
     rpts = new SimpleCarpose[params.Hdl.MaxCP];
     spts = new SimpleCarpose[params.Hdl.MaxCP];
 }
 
 HdlEngine::HdlEngine(const std::string hdlFileName)
-    : frameProcessedNum(0)
+    : params()
+	, frameProcessedNum(0)
     , correction(params.Ugv.CorrectionFile)
     , dynamicMapRange(params)
     , accumMapRange(params)
     , localMapRange(params)
     , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC3, cv::Scalar(0,0,0))
 {
-    rawHdlPoints = new RawHdlPoint[MAX_CLOUD_NUM];
-    hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_NUM];
-    hdlPointCloud = new HdlPoint[MAX_CLOUD_NUM];
+    rawHdlPoints = new RawHdlPoint[MAX_CLOUD_SIZE];
+    hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_SIZE];
+    hdlPointCloud = new HdlPoint[MAX_CLOUD_SIZE];
     lpts = new SimpleCarpose[params.Hdl.MaxCP];
     rpts = new SimpleCarpose[params.Hdl.MaxCP];
     spts = new SimpleCarpose[params.Hdl.MaxCP];
@@ -54,6 +61,7 @@ HdlEngine::~HdlEngine()
 
 bool HdlEngine::initialize(const std::string hdlFileName)
 {
+    //This function is mainly used in offline env, useless during online
     frameProcessedNum = 0;
     if(hdlFileName.substr(hdlFileName.size() - 3,hdlFileName.size()) != "hdl"){
         DLOG(FATAL) << "Error reading HDL file: " << hdlFileName << "\nNot a HDL file.";
@@ -200,10 +208,10 @@ bool HdlEngine::processNextFrame()
         if(params.Hdl.RecordLocalMap)
         {
             if(params.LocalMap.SaveNeeded.count(frameProcessedNum)){
-                std::string localMapFileName("localmap-"), localMap3bFileName("localmap-3b-");
+                std::string localMapFileName("map_tmp/localmap-"), localMap3bFileName("map_tmp/localmap-3b-");
                 localMapFileName += to_string(frameProcessedNum) + ".png";
                 localMap3bFileName += to_string(frameProcessedNum) + ".png";
-                saveLocalMap(localMapFileName);
+                saveLocalMap(localMap3bFileName);
 //                write3bPng(localMap3bFileName);//NOTE: After re-designing of the local map storage, write3bpng() now has the same effect of saveLocalMap()
                 visualLocalMap(localMapFileName);
             }
@@ -507,11 +515,11 @@ bool HdlEngine::writeOnMat(cv::Mat mat, int x, int y, unsigned char value)
         break;
     case CAMERALANELINE:
         mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= LANELINE_CAMERA;
-        mat.at<cv::Vec3b>(mat.rows - y -1, x)[1] |= 255;//this line is for visualize, do not use in production env
+        //mat.at<cv::Vec3b>(mat.rows - y -1, x)[1] |= 255;//this line is for visualize, do not use in production env
         break;
     case CAMERASTOPLINE:
         mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= STOPLINE_YES;
-        mat.at<cv::Vec3b>(mat.rows - y -1, x)[2] |= 255;//this line is for visualize, do not use in production env
+        //mat.at<cv::Vec3b>(mat.rows - y -1, x)[2] |= 255;//this line is for visualize, do not use in production env
         break;
     case CAMERALSINTERSECT:
         mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= LANELINE_CAMERA;
@@ -729,11 +737,11 @@ bool HdlEngine::readPointsFromFile()
         return false;
     }
 #ifdef DEBUG
-//    DLOG(INFO) << "Total point number: " << totalPointsNum;
+    DLOG(INFO) << "Total point number: " << totalPointsNum;
 #endif
 
     //Secondly, read all points into container of raw HDL points
-    //After 2015-9-10, all '.hdl' file will include xyz info, no need to recalculate.
+    //Edit: after 2015-9-10, all '.hdl' file will include xyz info, no need to recalculate.
     //this is a critical file format change. IMPORTANT!!!
     switch(params.Hdl.HdlVersion)
     {
@@ -758,7 +766,7 @@ bool HdlEngine::readPointsFromFile()
             hdlPointCloud[i].z = hdlPointXYZs[i].z;
         }
 
-        //Thirdly, read in the carpos of current frame
+        //read in the carpos of current frame
         carposeReader >> currentPose.x >> currentPose.y >> currentPose.eulr;
         carposes.push_back(currentPose);
 
@@ -771,6 +779,26 @@ bool HdlEngine::readPointsFromFile()
         //Read in the carpose of current frame
         carposeReader >> currentPose.x >> currentPose.y >> currentPose.eulr >> currentPose.roll >> currentPose.pitch;
         carposes.push_back(currentPose);
+
+        //Read in camera points
+        cameraPointReader.read((char*)&lValid, sizeof(lValid));
+        cameraPointReader.read((char*)&rValid, sizeof(rValid));
+        cameraPointReader.read((char*)&sValid, sizeof(sValid));
+        if(lValid)
+        {
+            cameraPointReader.read((char*)&lnum, sizeof(lnum));
+            cameraPointReader.read((char*)lpts, sizeof(SimpleCarpose) * lnum);
+        }
+        if(rValid)
+        {
+            cameraPointReader.read((char*)&rnum, sizeof(rnum));
+            cameraPointReader.read((char*)rpts, sizeof(SimpleCarpose) * rnum);
+        }
+        if(sValid)
+        {
+            cameraPointReader.read((char*)&snum, sizeof(snum));
+            cameraPointReader.read((char*)spts, sizeof(SimpleCarpose) * snum);
+        }
     }
 
     return true;
@@ -780,7 +808,9 @@ bool HdlEngine::readPointsFromFile()
 bool HdlEngine::readPointsFromShm()
 {
     //This function should not be used when running offline
-
+#ifdef DEBUG
+    DLOG(INFO) << "Total point number: " << totalPointsNum;
+#endif
     MetaData shm;
     //1. get carpose
     shm.type = module::MetaData::META_NAVIGATION;
@@ -790,6 +820,7 @@ bool HdlEngine::readPointsFromShm()
     currentPose.roll = shm.value.v_navi.Eulr[0];//俯仰角
     currentPose.pitch = shm.value.v_navi.Eulr[1];//滚转角
     currentPose.eulr = shm.value.v_navi.Eulr[2];//方位角
+    currentPose.speed = shm.value.v_navi.V;
 
     //2. get hdl points
     shm.type = module::MetaData::META_LASER_HDL;
@@ -797,7 +828,32 @@ bool HdlEngine::readPointsFromShm()
     totalPointsNum = shm.value.v_laserHdl.pts_count;
     memcpy(hdlPointCloud, shm.value.v_laserHdl.pts, sizeof(HdlPoint) * totalPointsNum);
 
-    //3.push currentPose into carposes
+    //3. get camera pts
+    bool lValid, rValid, sValid;
+    int lnum, rnum, snum;
+    RecoData_t recoData;
+    recoData.type = RecoData_t::RT_2LANE_PTS;
+    SHARED_OBJECTS.GetRecoData(&recoData);
+    lValid = recoData.value.v_2lane_pts.lvalid;
+    rValid = recoData.value.v_2lane_pts.rvalid;
+    sValid = recoData.value.v_2lane_pts.svalid;
+    lnum = recoData.value.v_2lane_pts.lnum;
+    rnum = recoData.value.v_2lane_pts.rnum;
+    snum = recoData.value.v_2lane_pts.snum;
+    if(lValid)
+    {
+        memcpy(lpts, recoData.value.v_2lane_pts.lpts, sizeof(SimpleCarpose) * lnum);
+    }
+    if(rValid)
+    {
+        memcpy(rpts, recoData.value.v_2lane_pts.rpts, sizeof(SimpleCarpose) * rnum);
+    }
+    if(sValid)
+    {
+        memcpy(spts, recoData.value.v_2lane_pts.spts, sizeof(SimpleCarpose) * snum);
+    }
+
+    //4. push currentPose into carposes
     carposes.push_back(currentPose);
 
     return true;
@@ -901,48 +957,62 @@ bool HdlEngine::calcProbability()
     //Since version 2, camera points well added
     if(params.Hdl.HdlVersion > 1)
     {
-        //Here, l..., r..., s... represent left lanemark, right lanemark, stopline
-        bool lValid, rValid, sValid;
-        int lnum, rnum, snum;
-        cameraPointReader.read((char*)&lValid, sizeof(lValid));
-        cameraPointReader.read((char*)&rValid, sizeof(rValid));
-        cameraPointReader.read((char*)&sValid, sizeof(sValid));
+        int x,y;
         if(lValid)
         {
-            cameraPointReader.read((char*)&lnum, sizeof(lnum));
-            cameraPointReader.read((char*)lpts, sizeof(SimpleCarpose) * lnum);
+            //write every recorded points on map
             for(int i = 0; i < lnum; ++i)
             {
-                int x,y;
                 if(dynamicMapRange.toLocal(lpts[i].x, lpts[i].y, x, y))
                 {
-                    dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALANELINE;
+                    switch (dynamicMap.at(y * dynamicMapRange.maxX + x).a) {
+                    case CAMERASTOPLINE:
+                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALSINTERSECT;
+                        break;
+                    case CAMERALANELINE:
+                        break;
+                    default:
+                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALANELINE;
+                        break;
+                    }
                 }
             }
         }
         if(rValid)
         {
-            cameraPointReader.read((char*)&rnum, sizeof(rnum));
-            cameraPointReader.read((char*)rpts, sizeof(SimpleCarpose) * rnum);
             for(int i = 0; i < rnum; ++i)
             {
-                int x,y;
                 if(dynamicMapRange.toLocal(rpts[i].x, rpts[i].y, x, y))
                 {
-                    dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALANELINE;
+                    switch (dynamicMap.at(y * dynamicMapRange.maxX + x).a) {
+                    case CAMERASTOPLINE:
+                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALSINTERSECT;
+                        break;
+                    case CAMERALANELINE:
+                        break;
+                    default:
+                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALANELINE;
+                        break;
+                    }
                 }
             }
         }
         if(sValid)
         {
-            cameraPointReader.read((char*)&snum, sizeof(snum));
-            cameraPointReader.read((char*)spts, sizeof(SimpleCarpose) * snum);
             for(int i = 0; i < snum; ++i)
             {
-                int x,y;
                 if(dynamicMapRange.toLocal(spts[i].x, spts[i].y, x, y))
                 {
-                    dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERASTOPLINE;
+                    switch (dynamicMap.at(y * dynamicMapRange.maxX + x).a) {
+                    case CAMERASTOPLINE:
+                        break;
+                    case CAMERALANELINE:
+                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALSINTERSECT;
+                        break;
+                    default:
+                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERASTOPLINE;
+                        break;
+                    }
                 }
             }
         }

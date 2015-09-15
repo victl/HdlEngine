@@ -27,7 +27,7 @@ INCLUDEPATH += /usr/include/opencv \
              /usr/include/opencv2 \
             /home/victor/workspace/zoulu
 DEFINES += DEBUG
-DEFINES += OFFLINE
+#DEFINES += OFFLINE
 
 DISTFILES += \
     ../ugv-share/ugv.conf
