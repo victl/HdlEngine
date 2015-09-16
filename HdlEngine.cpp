@@ -30,6 +30,18 @@ HdlEngine::HdlEngine()
     rawHdlPoints = new RawHdlPoint[MAX_CLOUD_SIZE];
     hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_SIZE];
     hdlPointCloud = new HdlPoint[MAX_CLOUD_SIZE];
+    dynamicMap = new Grid*[DETECT_WINDOW_SIZE];
+    accumMap = new Grid*[DETECT_WINDOW_SIZE];
+    newAccumMap= new Grid*[DETECT_WINDOW_SIZE];
+    for( int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+    {
+        dynamicMap[i] = new Grid[DETECT_WINDOW_SIZE];
+        memset(dynamicMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+        accumMap[i] = new Grid[DETECT_WINDOW_SIZE];
+        memset(accumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+        newAccumMap[i] = new Grid[DETECT_WINDOW_SIZE];
+        memset(newAccumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+    }
     lpts = new SimpleCarpose[params.Hdl.MaxCP];
     rpts = new SimpleCarpose[params.Hdl.MaxCP];
     spts = new SimpleCarpose[params.Hdl.MaxCP];
@@ -47,6 +59,18 @@ HdlEngine::HdlEngine(const std::string hdlFileName)
     rawHdlPoints = new RawHdlPoint[MAX_CLOUD_SIZE];
     hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_SIZE];
     hdlPointCloud = new HdlPoint[MAX_CLOUD_SIZE];
+    dynamicMap = new Grid*[DETECT_WINDOW_SIZE];
+    accumMap = new Grid*[DETECT_WINDOW_SIZE];
+    newAccumMap= new Grid*[DETECT_WINDOW_SIZE];
+    for( int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+    {
+        dynamicMap[i] = new Grid[DETECT_WINDOW_SIZE];
+        memset(dynamicMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+        accumMap[i] = new Grid[DETECT_WINDOW_SIZE];
+        memset(accumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+        newAccumMap[i] = new Grid[DETECT_WINDOW_SIZE];
+        memset(newAccumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+    }
     lpts = new SimpleCarpose[params.Hdl.MaxCP];
     rpts = new SimpleCarpose[params.Hdl.MaxCP];
     spts = new SimpleCarpose[params.Hdl.MaxCP];
@@ -57,6 +81,21 @@ HdlEngine::~HdlEngine()
 {
     hdlReader.is_open() ? hdlReader.close(),NULL:NULL;
     carposeReader.is_open() ? carposeReader.close(),NULL:NULL;
+    for( int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+    {
+        delete [] dynamicMap[i];
+        delete [] accumMap[i];
+        delete [] newAccumMap[i];
+    }
+    delete[] rawHdlPoints;
+    delete[] hdlPointXYZs;
+    delete[] hdlPointCloud;
+    delete[] dynamicMap;
+    delete[] accumMap;
+    delete[] newAccumMap;
+    delete[] lpts;
+    delete[] rpts;
+    delete[] spts;
 }
 
 bool HdlEngine::initialize(const std::string hdlFileName)
@@ -83,9 +122,9 @@ bool HdlEngine::initialize(const std::string hdlFileName)
         DLOG(FATAL)  << "Error reading camera points file: " << baseFileName + ".camerapoints" << "\nFile not exist or you don't have "
                                                                           "permission to access it.";
     }
-    //we resize those maps to 0 first, so each map is guaranteed to be re-initialized to default value (0s)
-    dynamicMap.resize(0);dynamicMap.resize(params.Scale.Width*params.Scale.Width);
-    accumMap.resize(0);accumMap.resize(params.Scale.Width*params.Scale.Width);
+//    //we resize those maps to 0 first, so each map is guaranteed to be re-initialized to default value (0s)
+//    dynamicMap.resize(0);dynamicMap.resize(params.Scale.Width*params.Scale.Width);
+//    accumMap.resize(0);accumMap.resize(params.Scale.Width*params.Scale.Width);
     //hdlInstream && carposInstream must be opened properly, so set them as return value
     return hdlReader && carposeReader && cameraPointReader;
 }
@@ -111,10 +150,29 @@ bool HdlEngine::processNextFrame()
 #endif
 
     //Process the dynamic map
-//    Range dynamicMapRange(currentPose, params);
     dynamicMapRange = Range(currentPose, params);
-    dynamicMap.resize(0);
-    dynamicMap.resize(dynamicMapRange.maxX * dynamicMapRange.maxY);
+
+    //reset dynamic map
+    //NOTE: doing reset this way is so ugly. There is a new class 'std::array' that was introduced by c++11 standard,
+    //which handles the problem gracefully. Consider using std::array after the compiler on car been upgraded to newer g++ version (>=4.8.4)
+    for(int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+    {
+        memset(dynamicMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+    }
+//    dynamicMap.resize(0);
+//    dynamicMap.resize(dynamicMapRange.maxX * dynamicMapRange.maxY);
+//    if(dynamicMapRange.maxX != 651)
+//    {
+//        ++xCounter;//for testing
+//        DLOG(INFO) << "t:"<<frameProcessedNum<<"x:" << dynamicMapRange.maxX <<"\ty:"<<dynamicMapRange.maxY;//testing
+//    }
+//    if(dynamicMapRange.maxY != 651)
+//    {
+//        ++yCounter;//for testing
+//        DLOG(INFO) << "t:"<<frameProcessedNum<<"x:" << dynamicMapRange.maxX <<"\ty:"<<dynamicMapRange.maxY;//testing
+//    }
+
+    //process each point
     for (int i = 0; i < totalPointsNum; ++i){
         //for convinence, define some tmp variables to represent current point's features:
         unsigned int distance = hdlPointCloud[i].distance;
@@ -155,7 +213,6 @@ bool HdlEngine::processNextFrame()
         }
 
 
-        int id = row * dynamicMapRange.maxX + col;
         /*Following commented out functionalities are to be implimented in future*/
 //        if (ic>200&&z>0 &&abs(x)<7000)
 //            if (d_map->TrafficSignGrid.count(id))
@@ -171,21 +228,22 @@ bool HdlEngine::processNextFrame()
 //        double R = sqrt(pow((col+0.5)*gridsize-width/2,2)+pow(height/2-(row+0.5)*gridsize,2));
 //        double a =(acos(((col+0.5)*gridsize-width/2)/R ));
 //        int line = int(a/M_PI*angle);
-        ++dynamicMap.at(id).pointNum;
-//        dynamicMap.at(id).average = (dynamicMap.at(id).average *dynamicMap.at(id).pointNum + z) / (dynamicMap.at(id).pointNum + 1);//testing
-        if (!dynamicMap.at(id).highest &&!dynamicMap.at(id).lowest)
+
+        ++dynamicMap[col][row].pointNum;
+//        dynamicMap[col][row].average = (dynamicMap[col][row].average *dynamicMap[col][row].pointNum + z) / (dynamicMap[col][row].pointNum + 1);//testing
+        if (!dynamicMap[col][row].highest &&!dynamicMap[col][row].lowest)
         {
-            dynamicMap.at(id).highest = z;
-            dynamicMap.at(id).lowest = z;
+            dynamicMap[col][row].highest = z;
+            dynamicMap[col][row].lowest = z;
         }
         else
         {
-            if (dynamicMap.at(id).highest < z)
+            if (dynamicMap[col][row].highest < z)
             {
-                dynamicMap.at(id).highest = z;
-            } else if (dynamicMap.at(id).lowest > z)
+                dynamicMap[col][row].highest = z;
+            } else if (dynamicMap[col][row].lowest > z)
             {
-                dynamicMap.at(id).lowest = z;
+                dynamicMap[col][row].lowest = z;
             }
         }
     }
@@ -204,14 +262,14 @@ bool HdlEngine::processNextFrame()
 //        dynamicMapFileName += std::to_string(frameProcessedNum) + ".png";
         accumMapFileName += /*std::*/to_string(frameProcessedNum) + ".png";
 //        saveFrame(dynamicMap, dynamicMapRange.maxX, dynamicMapRange.maxY, dynamicMapFileName);
-        saveFrame(accumMap, accumMapRange.maxX, accumMapRange.maxY, accumMapFileName);
+        saveFrame(accumMap, accumMapRange, accumMapFileName);
         if(params.Hdl.RecordLocalMap)
         {
             if(params.LocalMap.SaveNeeded.count(frameProcessedNum)){
                 std::string localMapFileName("map_tmp/localmap-"), localMap3bFileName("map_tmp/localmap-3b-");
                 localMapFileName += to_string(frameProcessedNum) + ".png";
                 localMap3bFileName += to_string(frameProcessedNum) + ".png";
-                saveLocalMap(localMap3bFileName);
+                write3bPng(localMap3bFileName);
 //                write3bPng(localMap3bFileName);//NOTE: After re-designing of the local map storage, write3bpng() now has the same effect of saveLocalMap()
                 visualLocalMap(localMapFileName);
             }
@@ -223,12 +281,25 @@ bool HdlEngine::processNextFrame()
 }
 
 //This function is very IN-MATURE, seemed to have some minor bugs, but I couldn't find where the problem is. So, pls use it with caution!
-bool HdlEngine::saveFrame(const std::vector<Grid> &frame, int width, int height,const std::string& name)
+bool HdlEngine::saveFrame(Grid** frame, const Range& range,const std::string& name)
 {
-    cv::Mat img(width, height, CV_8UC1, cv::Scalar(127));
-    for(uint i = 0; i < frame.size(); ++i){
-        int row = height - i / width - 1;
-        int col = i % width;
+    cv::Mat img(range.maxY, range.maxX, CV_8UC1, cv::Scalar(127));
+    for(int x = 0; x < range.maxX; ++x){
+        for(int y = 0; y < range.maxY; ++y)
+        {
+            switch (frame[x][y].o) {
+            case OCCUPIED:
+                img.at<uchar>(img.rows - y - 1, x) = 0;
+                break;
+            case CLEAR:
+                img.at<uchar>(img.rows - y - 1, x) = 255;
+                break;
+            default:
+                break;
+            }
+        }
+//        int row = height - i / width - 1;
+//        int col = i % width;
 //        if (frame.at(i).p < 0.5)
 //        {
 //            img.at<uchar>(row, col) = 255;
@@ -238,19 +309,9 @@ bool HdlEngine::saveFrame(const std::vector<Grid> &frame, int width, int height,
 //            img.at<uchar>(row, col) = 0;
 ////            DLOG(INFO) << "Occupied: " <<frame.at(i).pointNum;
 //        }
-        switch (frame.at(i).o) {
-        case OCCUPIED:
-            img.at<uchar>(row, col) = 0;
-            break;
-        case CLEAR:
-            img.at<uchar>(row, col) = 255;
-            break;
-        default:
-            break;
-        }
     }
     cv::imshow("Current Map State", img);
-    cv::waitKey(25);
+    cv::waitKey(20);
 //    cv::imwrite(name, img);
     return true;
 }
@@ -299,23 +360,55 @@ void HdlEngine::saveLocalMap(const std::string name)
 
 bool HdlEngine::updateAccumMap()
 {
-    std::vector<Grid> newAccumMap(dynamicMapRange.maxX * dynamicMapRange.maxY);
+    if(frameProcessedNum == 1)
+    {
+        accumMapRange = dynamicMapRange;
+    }
+    if(accumMapRange != dynamicMapRange)
+    {
+        //reset newAccumMap
+        for(int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+        {
+            memset(newAccumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+        }
+        //Firstly, copy old accumulated map value to new accumulated map
+        //NOTE: following codes will fail if dynamic map and accumulated map does not overlap.
+        //But this is not practically possible, so 'index out of range' is not checked.
+
+        int deltax, deltay;
+        dynamicMapRange.distanceTo(accumMapRange, deltax, deltay);
+        int sourceCopyIndex =  0;
+        int destCopyIndex = 0;
+        deltay < 0 ? destCopyIndex = -deltay : sourceCopyIndex = deltay;
+        int sourceShift = 0;
+        int destShift = 0;
+        deltax < 0 ? destShift = -deltax : sourceShift = deltax;
+        int indexLength = accumMapRange.maxX - abs(deltax);
+        int copyLength = accumMapRange.maxY - abs(deltay);
+        for(int i = 0; i < indexLength; ++i)
+        {
+            memcpy(newAccumMap[i + destShift] + destCopyIndex,
+                            accumMap[i + sourceShift] + sourceCopyIndex,
+                            sizeof(Grid) * copyLength);
+        }
+    }
+
+    //Secondly, add new info (from dynamic map) to new accumulated map
     for(int x = 0; x < dynamicMapRange.maxX; ++x)
     {
         for(int y = 0; y < dynamicMapRange.maxY; ++y)
         {
-            int id = y * dynamicMapRange.maxX + x;
-            int accumX, accumY;
+                mergeGrid(newAccumMap[x][y], dynamicMap[x][y]);
+                if(newAccumMap[x][y].HitCount >= params.ProbMap.OccupiedThreshold)
+                {
+                    newAccumMap[x][y].o = OCCUPIED;
+                }
+                else if(newAccumMap[x][y].o != OCCUPIED && newAccumMap[x][y].pointNum)
+                {
+                    newAccumMap[x][y].o = CLEAR;
+                }
 
-            if(dynamicMapRange.translate(x, y, accumMapRange, accumX, accumY))
-            {
-                //Firstly, copy old accumulated map value to new map
-                int accumId = accumY * accumMapRange.maxX + accumX;
-                newAccumMap[id] = accumMap[accumId];
-            }
 
-                //then merge new accumulated map with dynamic map
-                newAccumMap[id] += dynamicMap[id];
 //                if (newAccumMap[id].p < 0.5)
 //                {
 //                    if (dynamicMap[id].p < newAccumMap[id].p)
@@ -387,14 +480,6 @@ bool HdlEngine::updateAccumMap()
 //            {
 //                newAccumMap[id].type = CLEAR;
 //            }
-            if(newAccumMap.at(id).HitCount >= params.ProbMap.OccupiedThreshold)
-            {
-                newAccumMap.at(id).o = OCCUPIED;
-            }
-            else if(newAccumMap[id].o != OCCUPIED && newAccumMap[id].pointNum)
-            {
-                newAccumMap[id].o = CLEAR;
-            }
         }
     }
     //following codes are for debugging
@@ -419,7 +504,12 @@ bool HdlEngine::updateAccumMap()
 //    }
 //#endif
     //end debug codes
+
+    //swap accumMap and newAccumMap;
+    Grid** tmp = accumMap;
     accumMap = newAccumMap;
+    newAccumMap = tmp;
+
     accumMapRange = dynamicMapRange;
     return true;
 }
@@ -465,7 +555,7 @@ bool HdlEngine::adjustLocalMapSize()
     if(localMapRange.left > accumMapRange.left)
     {
         localMapRange.left -= params.LocalMap.ExpandUnit;
-        rect.x = params.LocalMap.ExpandUnit * params.Scale.xScale;
+        rect.x = round(params.LocalMap.ExpandUnit * params.Scale.xScale);
     }
     else if (localMapRange.right < accumMapRange.right)
     {
@@ -478,7 +568,7 @@ bool HdlEngine::adjustLocalMapSize()
     else if(localMapRange.top < accumMapRange.top)
     {
         localMapRange.top += params.LocalMap.ExpandUnit;
-        rect.y = params.LocalMap.ExpandUnit * params.Scale.yScale;
+        rect.y = round(params.LocalMap.ExpandUnit * params.Scale.yScale);
     }
     localMapRange.update();
     cv::Mat newLocalMap(localMapRange.maxY, localMapRange.maxX, CV_8UC3, cv::Scalar(0,0,0));
@@ -488,15 +578,14 @@ bool HdlEngine::adjustLocalMapSize()
     return true;
 }
 
-bool HdlEngine::updateRegion(cv::Mat region, const std::vector<Grid> &accumMap)
+bool HdlEngine::updateRegion(cv::Mat region, Grid** accumMap)
 {
     for(unsigned short x = 0; x < accumMapRange.maxX; ++x)
     {
         for(unsigned short y = 0; y < accumMapRange.maxY; ++y)
         {
-            int id = y * dynamicMapRange.maxX + x;
-            writeOnMat(region, x, y, accumMap.at(id).a);
-            writeOnMat(region, x, y, accumMap.at(id).o);
+            writeOnMat(region, x, y, accumMap[x][y].a);
+            writeOnMat(region, x, y, accumMap[x][y].o);
         }
     }
     return true;
@@ -508,6 +597,7 @@ bool HdlEngine::writeOnMat(cv::Mat mat, int x, int y, unsigned char value)
     switch (value) {
     case OCCUPIED:
         mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= ROADEDGE_OCCUPIED;
+        mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] &= (~ROADEDGE_CLEAR);
         break;
     case CLEAR:
         if( (mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] & ROADEDGE_OCCUPIED) != ROADEDGE_OCCUPIED)
@@ -539,12 +629,12 @@ Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)
     //for dynamic map and accumulated map, we use vector access. For local map, cv::Mat access method is used
     switch (type) {
     case DYNAMICMAP:
-        o = dynamicMap.at( yy * dynamicMapRange.maxX + xx ).o;
-        a = dynamicMap.at( yy * dynamicMapRange.maxX + xx ).a;
+        o = dynamicMap[xx][yy].o;
+        a = dynamicMap[xx][yy].a;
         break;
     case ACCUMMAP:
-        o = accumMap.at( yy * accumMapRange.maxX + xx ).o;
-        a = accumMap.at( yy * accumMapRange.maxX + xx ).a;
+        o = accumMap[xx][yy].o;
+        a = accumMap[xx][yy].a;
         break;
         //after the local map had switched from 1channel to 3channel, the content of local map grid is already of type 'Point3B'
 //#ifdef OFFLINE
@@ -649,13 +739,14 @@ bool HdlEngine::write3bPng(const std::string fileName, MapType type)
     switch (type) {
     case DYNAMICMAP:
     {
-        cv::Mat img_d(dynamicMapRange.maxY, dynamicMapRange.maxY, CV_8UC3);
-        for(unsigned int i = 0; i < dynamicMap.size(); ++i)
+        cv::Mat img_d(dynamicMapRange.maxY, dynamicMapRange.maxX, CV_8UC3);
+        for(int x = 0; x < dynamicMapRange.maxX; ++x)
         {
-            unsigned short x = i % dynamicMapRange.maxX;
-            unsigned short y = i / dynamicMapRange.maxX;
-            Point3B pt = get3b(x, y, DYNAMICMAP);
-            img_d.at<cv::Vec3b>(img_d.rows - y - 1, x) = cv::Vec3b(pt.base, pt.road, pt.sig);
+            for( int y = 0; y < dynamicMapRange.maxY; ++y)
+            {
+                Point3B pt = get3b(x, y, DYNAMICMAP);
+                img_d.at<cv::Vec3b>(img_d.rows - y - 1, x) = cv::Vec3b(pt.base, pt.road, pt.sig);
+            }
         }
         cv::imwrite(fileName, img_d);
         osHeader << (dynamicMapRange.right + dynamicMapRange.left) / 2 << '\t'
@@ -667,13 +758,14 @@ bool HdlEngine::write3bPng(const std::string fileName, MapType type)
     }
     case ACCUMMAP:
     {
-        cv::Mat img_a(accumMapRange.maxY, accumMapRange.maxY, CV_8UC3);
-        for(unsigned int i = 0; i < accumMap.size(); ++i)
+        cv::Mat img_a(accumMapRange.maxY, accumMapRange.maxX, CV_8UC3);
+        for(int x = 0; x < accumMapRange.maxX; ++x)
         {
-            unsigned short x = i % accumMapRange.maxX;
-            unsigned short y = i / accumMapRange.maxX;
-            Point3B pt = get3b(x, y, ACCUMMAP);
-            img_a.at<cv::Vec3b>(img_a.rows - y - 1, x) = cv::Vec3b(pt.sig, pt.road, pt.base);
+            for( int y = 0; y < accumMapRange.maxY; ++y)
+            {
+                Point3B pt = get3b(x, y, ACCUMMAP);
+                img_a.at<cv::Vec3b>(img_a.rows - y - 1, x) = cv::Vec3b(pt.base, pt.road, pt.sig);
+            }
         }
         cv::imwrite(fileName, img_a);
         osHeader << (accumMapRange.right + accumMapRange.left) / 2 << '\t'
@@ -711,7 +803,7 @@ bool HdlEngine::write3bPng(const std::string fileName, MapType type)
     return true;
 }
 
-const std::vector<Grid> &HdlEngine::getAccumMap()
+Grid** HdlEngine::getAccumMap()
 {
     return accumMap;
 }
@@ -777,7 +869,8 @@ bool HdlEngine::readPointsFromFile()
             return false;
         }
         //Read in the carpose of current frame
-        carposeReader >> currentPose.x >> currentPose.y >> currentPose.eulr >> currentPose.roll >> currentPose.pitch;
+        unsigned long time;
+        carposeReader >> currentPose.x >> currentPose.y >> currentPose.eulr >> currentPose.roll >> currentPose.pitch >>currentPose.speed >> time;
         carposes.push_back(currentPose);
 
         //Read in camera points
@@ -939,22 +1032,33 @@ bool HdlEngine::calcProbability()
 ////#endif
 ////        }
 //    }//end for(auto g:...)
-    for(size_t i = 0; i < dynamicMap.size(); ++i){
-        unsigned char n = (dynamicMap.at(i).highest - dynamicMap.at(i).lowest) / params.ProbMap.unitHeight;
-        if(n) // current grid contain laser points and interval between highest and lowest is greater than unitHeight
-        {
-            dynamicMap.at(i).p = 0.5 + n * params.ProbMap.incrementUnit;
-            dynamicMap.at(i).p > 1 ? dynamicMap.at(i).p = 1 : 0;
-//            dynamicMap.at(i).o = OCCUPIED;
-            dynamicMap.at(i).HitCount = 1;
-#ifdef MOREDETAILS
-            if(dynamicMap.at(i).p > 0.5)
-                dynamicMap.at(i).type = OCCUPIED;
-#endif
-        }
-    }//end for(sizt_t i)
 
-    //Since version 2, camera points well added
+    for(int col = 0; col < dynamicMapRange.maxX; ++col)
+    {
+        for(int row = 0; row < dynamicMapRange.maxY; ++row)
+        {
+            if(dynamicMap[col][row].highest - dynamicMap[col][row].lowest > params.ProbMap.unitHeight)
+            {
+                dynamicMap[col][row].HitCount = 1;
+            }
+            /** all codes here were not needed for the moment, for performance consideration, commented out
+//            unsigned char n = (dynamicMap[col][row].highest - dynamicMap[col][row].lowest) / params.ProbMap.unitHeight;
+//            if(n) // current grid contain laser points and interval between highest and lowest is greater than unitHeight
+//            {
+////                dynamicMap[col][row].p = 0.5 + n * params.ProbMap.incrementUnit;
+////                dynamicMap[col][row].p > 1 ? dynamicMap[col][row].p = 1 : 0;
+//    //            dynamicMap[col][row].o = OCCUPIED;
+//                dynamicMap[col][row].HitCount = 1;
+//    #ifdef MOREDETAILS
+//                if(dynamicMap[col][row].p > 0.5)
+//                    dynamicMap[col][row].type = OCCUPIED;
+//    #endif
+//            }*/
+        }
+    }
+
+
+    //Since version 2, camera points were added
     if(params.Hdl.HdlVersion > 1)
     {
         int x,y;
@@ -965,14 +1069,14 @@ bool HdlEngine::calcProbability()
             {
                 if(dynamicMapRange.toLocal(lpts[i].x, lpts[i].y, x, y))
                 {
-                    switch (dynamicMap.at(y * dynamicMapRange.maxX + x).a) {
+                    switch (dynamicMap[x][y].a) {
                     case CAMERASTOPLINE:
-                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALSINTERSECT;
+                        dynamicMap[x][y].a = CAMERALSINTERSECT;
                         break;
                     case CAMERALANELINE:
                         break;
                     default:
-                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALANELINE;
+                        dynamicMap[x][y].a = CAMERALANELINE;
                         break;
                     }
                 }
@@ -984,14 +1088,14 @@ bool HdlEngine::calcProbability()
             {
                 if(dynamicMapRange.toLocal(rpts[i].x, rpts[i].y, x, y))
                 {
-                    switch (dynamicMap.at(y * dynamicMapRange.maxX + x).a) {
+                    switch (dynamicMap[x][y].a) {
                     case CAMERASTOPLINE:
-                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALSINTERSECT;
+                        dynamicMap[x][y].a = CAMERALSINTERSECT;
                         break;
                     case CAMERALANELINE:
                         break;
                     default:
-                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALANELINE;
+                        dynamicMap[x][y].a = CAMERALANELINE;
                         break;
                     }
                 }
@@ -1003,14 +1107,14 @@ bool HdlEngine::calcProbability()
             {
                 if(dynamicMapRange.toLocal(spts[i].x, spts[i].y, x, y))
                 {
-                    switch (dynamicMap.at(y * dynamicMapRange.maxX + x).a) {
+                    switch (dynamicMap[x][y].a) {
                     case CAMERASTOPLINE:
                         break;
                     case CAMERALANELINE:
-                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERALSINTERSECT;
+                        dynamicMap[x][y].a = CAMERALSINTERSECT;
                         break;
                     default:
-                        dynamicMap.at(y * dynamicMapRange.maxX + x).a = CAMERASTOPLINE;
+                        dynamicMap[x][y].a = CAMERASTOPLINE;
                         break;
                     }
                 }

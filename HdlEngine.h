@@ -29,7 +29,7 @@ public /*method*/:
     bool processNextFrame();
 
     //following two functions are mainly used for debuging
-    bool saveFrame(const std::vector<Grid>& frame, int width, int height, const std::string& name);
+    bool saveFrame(Grid** frame, const Range& range, const std::string& name);
     bool visualLocalMap(const std::string& name);
 
     void saveLocalMap(const std::string name);
@@ -37,7 +37,7 @@ public /*method*/:
 
     bool write3bPng(const std::string fileName = "unamed-map.png", MapType type = LOCALMAP);
     //The following 3 methods are mainly designed for Wang Shi Yao's programs
-    const std::vector<Grid>& getAccumMap();
+    Grid** getAccumMap();
     const Range& getAccumMapRange();
     const Carpose& getCurrentPose();
 
@@ -75,7 +75,7 @@ private /*method*/:
     //prepare local map. If current accumulated map can't fit into current local map, expand the local map
     inline bool adjustLocalMapSize();
     //update the corresponding region of local map with accumulated map
-    inline bool updateRegion(cv::Mat region, const std::vector<Grid>& accumMap);
+    inline bool updateRegion(cv::Mat region, Grid** accumMap);
 
     //write value to cv::Mat. We need this function because OpenCV treat top-left as origin
     //while our coordinate system's orignin is on bottom-left
@@ -128,10 +128,13 @@ private:
     //the range of dynamic map.
     Range dynamicMapRange;
     //dynamic map
-    std::vector<Grid> dynamicMap;
+    Grid** dynamicMap;
+//    std::vector<Grid> dynamicMap;
 
     //accumulated map
-    std::vector<Grid> accumMap;
+    Grid** accumMap;
+    Grid** newAccumMap;
+//    std::vector<Grid> accumMap;
     //the range of accumulated map.
     Range accumMapRange;
 
@@ -139,7 +142,6 @@ private:
     cv::Mat localMap;
     //the range of local map
     Range localMapRange;
-
 
 };
 

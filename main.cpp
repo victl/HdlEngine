@@ -30,7 +30,7 @@ int main(int argc, char** argv)
         gettimeofday(&end, NULL);
         long useconds = end.tv_usec - start.tv_usec;
         long seconds  = end.tv_sec  - start.tv_sec;
-        DLOG(INFO) << "Time to process all frame: " << seconds<<"s, "<<useconds<<"microseconds";
+        DLOG(INFO) << "Finish time: " << seconds <<"seconds  "<<useconds<<"microseconds";
     return 0;
 }
 
