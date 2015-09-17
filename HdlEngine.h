@@ -133,7 +133,7 @@ private:
 
     //accumulated map
     Grid** accumMap;
-    Grid** newAccumMap;
+    Grid** newAccumMap; //a temporary storing area for merging dynamic map and accumulated map
 //    std::vector<Grid> accumMap;
     //the range of accumulated map.
     Range accumMapRange;
@@ -142,6 +142,8 @@ private:
     cv::Mat localMap;
     //the range of local map
     Range localMapRange;
+
+    //FOWLLOWING VARIABLES ARE FOR TESTING
 
 };
 

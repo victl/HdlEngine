@@ -22,25 +22,25 @@ HdlEngine::HdlEngine()
     : params()
 	, frameProcessedNum(0)
     , correction(params.Ugv.CorrectionFile)
-    , dynamicMapRange(params)
-    , accumMapRange(params)
-    , localMapRange(params)
+    , dynamicMapRange(Carpose(), params)
+    , accumMapRange(Carpose(), params)
+    , localMapRange(Carpose(), params)
     , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC3, cv::Scalar(0,0,0))
 {
     rawHdlPoints = new RawHdlPoint[MAX_CLOUD_SIZE];
     hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_SIZE];
     hdlPointCloud = new HdlPoint[MAX_CLOUD_SIZE];
-    dynamicMap = new Grid*[DETECT_WINDOW_SIZE];
-    accumMap = new Grid*[DETECT_WINDOW_SIZE];
-    newAccumMap= new Grid*[DETECT_WINDOW_SIZE];
-    for( int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+    dynamicMap = new Grid*[dynamicMapRange.maxX];
+    accumMap = new Grid*[dynamicMapRange.maxX];
+    newAccumMap= new Grid*[dynamicMapRange.maxX];
+    for( int i = 0; i < dynamicMapRange.maxX; ++i)
     {
-        dynamicMap[i] = new Grid[DETECT_WINDOW_SIZE];
-        memset(dynamicMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
-        accumMap[i] = new Grid[DETECT_WINDOW_SIZE];
-        memset(accumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
-        newAccumMap[i] = new Grid[DETECT_WINDOW_SIZE];
-        memset(newAccumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+        dynamicMap[i] = new Grid[dynamicMapRange.maxY];
+        memset(dynamicMap[i], 0, sizeof(Grid) * dynamicMapRange.maxY);
+        accumMap[i] = new Grid[dynamicMapRange.maxY];
+        memset(accumMap[i], 0, sizeof(Grid) * dynamicMapRange.maxY);
+        newAccumMap[i] = new Grid[dynamicMapRange.maxY];
+        memset(newAccumMap[i], 0, sizeof(Grid) * dynamicMapRange.maxY);
     }
     lpts = new SimpleCarpose[params.Hdl.MaxCP];
     rpts = new SimpleCarpose[params.Hdl.MaxCP];
@@ -51,25 +51,25 @@ HdlEngine::HdlEngine(const std::string hdlFileName)
     : params()
 	, frameProcessedNum(0)
     , correction(params.Ugv.CorrectionFile)
-    , dynamicMapRange(params)
-    , accumMapRange(params)
-    , localMapRange(params)
+    , dynamicMapRange(Carpose(), params)
+    , accumMapRange(Carpose(), params)
+    , localMapRange(Carpose(), params)
     , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC3, cv::Scalar(0,0,0))
 {
     rawHdlPoints = new RawHdlPoint[MAX_CLOUD_SIZE];
     hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_SIZE];
     hdlPointCloud = new HdlPoint[MAX_CLOUD_SIZE];
-    dynamicMap = new Grid*[DETECT_WINDOW_SIZE];
-    accumMap = new Grid*[DETECT_WINDOW_SIZE];
-    newAccumMap= new Grid*[DETECT_WINDOW_SIZE];
-    for( int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+    dynamicMap = new Grid*[dynamicMapRange.maxX];
+    accumMap = new Grid*[dynamicMapRange.maxX];
+    newAccumMap= new Grid*[dynamicMapRange.maxX];
+    for( int i = 0; i < dynamicMapRange.maxX; ++i)
     {
-        dynamicMap[i] = new Grid[DETECT_WINDOW_SIZE];
-        memset(dynamicMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
-        accumMap[i] = new Grid[DETECT_WINDOW_SIZE];
-        memset(accumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
-        newAccumMap[i] = new Grid[DETECT_WINDOW_SIZE];
-        memset(newAccumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+        dynamicMap[i] = new Grid[dynamicMapRange.maxY];
+        memset(dynamicMap[i], 0, sizeof(Grid) * dynamicMapRange.maxY);
+        accumMap[i] = new Grid[dynamicMapRange.maxY];
+        memset(accumMap[i], 0, sizeof(Grid) * dynamicMapRange.maxY);
+        newAccumMap[i] = new Grid[dynamicMapRange.maxY];
+        memset(newAccumMap[i], 0, sizeof(Grid) * dynamicMapRange.maxY);
     }
     lpts = new SimpleCarpose[params.Hdl.MaxCP];
     rpts = new SimpleCarpose[params.Hdl.MaxCP];
@@ -81,7 +81,7 @@ HdlEngine::~HdlEngine()
 {
     hdlReader.is_open() ? hdlReader.close(),NULL:NULL;
     carposeReader.is_open() ? carposeReader.close(),NULL:NULL;
-    for( int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+    for( int i = 0; i < dynamicMapRange.maxX; ++i)
     {
         delete [] dynamicMap[i];
         delete [] accumMap[i];
@@ -133,7 +133,7 @@ bool HdlEngine::processNextFrame()
 {
     ++frameProcessedNum;
 #ifdef DEBUG
-    DLOG(INFO) << "Processing frame No." << frameProcessedNum << "...";
+//    DLOG(INFO) << "Processing frame No." << frameProcessedNum << "...";
 #endif
 
 //read points from hdl
@@ -155,9 +155,9 @@ bool HdlEngine::processNextFrame()
     //reset dynamic map
     //NOTE: doing reset this way is so ugly. There is a new class 'std::array' that was introduced by c++11 standard,
     //which handles the problem gracefully. Consider using std::array after the compiler on car been upgraded to newer g++ version (>=4.8.4)
-    for(int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+    for(int i = 0; i < dynamicMapRange.maxX; ++i)
     {
-        memset(dynamicMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+        memset(dynamicMap[i], 0, sizeof(Grid) * dynamicMapRange.maxY);
     }
 //    dynamicMap.resize(0);
 //    dynamicMap.resize(dynamicMapRange.maxX * dynamicMapRange.maxY);
@@ -188,10 +188,15 @@ bool HdlEngine::processNextFrame()
             //means current point is not useful
             continue;
         }
+
         int x = hdlPointCloud[i].x;
         int y = hdlPointCloud[i].y;
         int z = hdlPointCloud[i].z;
 
+        double cx, cy;
+        //since version 3, HDL's XYZs are already global coordinates with unit length: 1mm
+        if(params.Hdl.HdlVersion < 3)
+        {
         //the following codes translate hdlpoint's xyz into global coordinates.
         //NOTE: CURRENT ALGORITHM DIDN'T TAKE PITCH AND ROLL VALUE INTO CONSIDERATION
         //THIS MIGHT NOT BE RIGHT. WILL BE CONSIDERED IN NEAR FUTURE - 2015-9-10
@@ -202,8 +207,12 @@ bool HdlEngine::processNextFrame()
         double dy=(double) y/1000.0;
 
         //And here, they were transformed into North-East astronomical coordinates
-        double cx =dx * cos(eulr) + dy * sin(eulr) + currentPose.x;
-        double cy =dy* cos(eulr) - dx* sin(eulr) + currentPose.y;
+        cx =dx * cos(eulr) + dy * sin(eulr) + currentPose.x;
+        cy =dy* cos(eulr) - dx* sin(eulr) + currentPose.y;
+        }else{
+            cx = ((double)x) / 1000.0;
+            cy = ((double)y) / 1000.0;
+        }
 
         //change to local coordinate. (this will change cx, cy. because they are pass as reference)
         //if the point falls out of the detecting range (toLocal returns false), we ignore current point
@@ -366,15 +375,18 @@ bool HdlEngine::updateAccumMap()
     }
     if(accumMapRange != dynamicMapRange)
     {
+        //the methdology adopted here is kind of complicated and confusing, while considerably efficient...
+        //This issue will be addressed after compiler on car upgraded to versions support c++11 standard, in which
+        //case, the class 'std::array' could be used. There might be some convinient functionalities to be ultilized.
+
         //reset newAccumMap
-        for(int i = 0; i < DETECT_WINDOW_SIZE; ++i)
+        for(int i = 0; i < dynamicMapRange.maxX; ++i)
         {
-            memset(newAccumMap[i], 0, sizeof(Grid) * DETECT_WINDOW_SIZE);
+            memset(newAccumMap[i], 0, sizeof(Grid) * dynamicMapRange.maxY);
         }
         //Firstly, copy old accumulated map value to new accumulated map
         //NOTE: following codes will fail if dynamic map and accumulated map does not overlap.
         //But this is not practically possible, so 'index out of range' is not checked.
-
         int deltax, deltay;
         dynamicMapRange.distanceTo(accumMapRange, deltax, deltay);
         int sourceCopyIndex =  0;
@@ -391,6 +403,11 @@ bool HdlEngine::updateAccumMap()
                             accumMap[i + sourceShift] + sourceCopyIndex,
                             sizeof(Grid) * copyLength);
         }
+    }else{
+        //or else, just swap them, avoiding copy all value
+        Grid** tmp = accumMap;
+        accumMap = newAccumMap;
+        newAccumMap = tmp;
     }
 
     //Secondly, add new info (from dynamic map) to new accumulated map
@@ -399,7 +416,8 @@ bool HdlEngine::updateAccumMap()
         for(int y = 0; y < dynamicMapRange.maxY; ++y)
         {
                 mergeGrid(newAccumMap[x][y], dynamicMap[x][y]);
-                if(newAccumMap[x][y].HitCount >= params.ProbMap.OccupiedThreshold)
+                if(newAccumMap[x][y].HitCount > 2
+                        && ((double)(newAccumMap[x][y].HitCount)) / newAccumMap[x][y].pointNum >= params.ProbMap.OccupiedThreshold)
                 {
                     newAccumMap[x][y].o = OCCUPIED;
                 }
@@ -505,11 +523,13 @@ bool HdlEngine::updateAccumMap()
 //#endif
     //end debug codes
 
-    //swap accumMap and newAccumMap;
+    //until now, newAccumMap has accumulated the most fresh info. So we swap it with accumMap
+    //for next frame processing iteration.
     Grid** tmp = accumMap;
     accumMap = newAccumMap;
     newAccumMap = tmp;
 
+    //update accumulated map range
     accumMapRange = dynamicMapRange;
     return true;
 }
@@ -829,7 +849,7 @@ bool HdlEngine::readPointsFromFile()
         return false;
     }
 #ifdef DEBUG
-    DLOG(INFO) << "Total point number: " << totalPointsNum;
+//    DLOG(INFO) << "Total point number: " << totalPointsNum;
 #endif
 
     //Secondly, read all points into container of raw HDL points
@@ -862,7 +882,7 @@ bool HdlEngine::readPointsFromFile()
         carposeReader >> currentPose.x >> currentPose.y >> currentPose.eulr;
         carposes.push_back(currentPose);
 
-    case 2:
+    default:
         if(!hdlReader.read((char*)hdlPointCloud, sizeof(HdlPoint)*totalPointsNum)){
     //        DLOG(FATAL)  << "Error reading HDL file: " << baseFileName + ".hdl" << "\nReading the" <<" points "
     //                                                                         "of frame: " << frameProcessed <<" error.";
@@ -892,6 +912,7 @@ bool HdlEngine::readPointsFromFile()
             cameraPointReader.read((char*)&snum, sizeof(snum));
             cameraPointReader.read((char*)spts, sizeof(SimpleCarpose) * snum);
         }
+        break;
     }
 
     return true;
