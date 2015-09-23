@@ -79,7 +79,8 @@ private /*method*/:
 
     //write value to cv::Mat. We need this function because OpenCV treat top-left as origin
     //while our coordinate system's orignin is on bottom-left
-    inline bool writeOnMat(cv::Mat mat, int x, int y, unsigned char value);
+    inline bool writeOOnMat(cv::Mat mat, int x, int y, unsigned char value);
+    inline bool writeAOnMat(cv::Mat mat, int x, int y, unsigned char value);
 
     //for 3b format input & output
     inline Point3B get3b(unsigned short xx, unsigned short yy, MapType type);

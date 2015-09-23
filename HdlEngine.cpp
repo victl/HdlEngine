@@ -133,7 +133,7 @@ bool HdlEngine::processNextFrame()
 {
     ++frameProcessedNum;
 #ifdef DEBUG
-//    DLOG(INFO) << "Processing frame No." << frameProcessedNum << "...";
+    DLOG(INFO) << "Processing frame No." << frameProcessedNum << "...";
 #endif
 
 //read points from hdl
@@ -177,13 +177,13 @@ bool HdlEngine::processNextFrame()
         //for convinence, define some tmp variables to represent current point's features:
         unsigned int distance = hdlPointCloud[i].distance;
         unsigned short rotAngle = hdlPointCloud[i].rotAngle;
-//        unsigned char intensity = hdlPointCloud[i].intensity;
+        unsigned char intensity = hdlPointCloud[i].intensity;
 //        unsigned char beamId = hdlPointCloud[i].beamId;
 
         if( distance < 3000 //3 meters
                 && rotAngle > 18000 - correction.blockedByHipAngle  //135 degree
                 && rotAngle < 18000 + correction.blockedByHipAngle //225 degree
-                && hdlPointXYZs[i].z > 0 ) //point height is greater than LiDAR
+                )
         {
             //means current point is not useful
             continue;
@@ -192,7 +192,15 @@ bool HdlEngine::processNextFrame()
         int x = hdlPointCloud[i].x;
         int y = hdlPointCloud[i].y;
         int z = hdlPointCloud[i].z;
-
+/*
+        if( //distance < 5000 && //3 meters
+                (rotAngle > 35700 || rotAngle < 300) &&
+                z == params.Hdl.NegHeight ) //point height is greater than LiDAR
+        {
+            //means current point is not useful
+            DLOG(INFO) << distance;//(int)intensity;
+        }
+*/
         double cx, cy;
         //since version 3, HDL's XYZs are already global coordinates with unit length: 1mm
         if(params.Hdl.HdlVersion < 3)
@@ -238,12 +246,15 @@ bool HdlEngine::processNextFrame()
 //        double a =(acos(((col+0.5)*gridsize-width/2)/R ));
 //        int line = int(a/M_PI*angle);
 
+        dynamicMap[col][row].zaverage = (dynamicMap[col][row].zaverage *dynamicMap[col][row].pointNum + z) / (dynamicMap[col][row].pointNum + 1);//testing
         ++dynamicMap[col][row].pointNum;
-//        dynamicMap[col][row].average = (dynamicMap[col][row].average *dynamicMap[col][row].pointNum + z) / (dynamicMap[col][row].pointNum + 1);//testing
         if (!dynamicMap[col][row].highest &&!dynamicMap[col][row].lowest)
         {
             dynamicMap[col][row].highest = z;
             dynamicMap[col][row].lowest = z;
+            dynamicMap[col][row].zaverage = z;
+            dynamicMap[col][row].iaverage = intensity;
+            intensity != 0 ? ++dynamicMap[col][row].nzPointNum : NULL;
         }
         else
         {
@@ -253,6 +264,11 @@ bool HdlEngine::processNextFrame()
             } else if (dynamicMap[col][row].lowest > z)
             {
                 dynamicMap[col][row].lowest = z;
+            }
+            if (intensity != 0)
+            {
+                dynamicMap[col][row].iaverage = (dynamicMap[col][row].iaverage * dynamicMap[col][row].nzPointNum + intensity) / (dynamicMap[col][row].nzPointNum + 1);
+                ++dynamicMap[col][row].nzPointNum;
             }
         }
     }
@@ -372,6 +388,11 @@ bool HdlEngine::updateAccumMap()
     if(frameProcessedNum == 1)
     {
         accumMapRange = dynamicMapRange;
+        //initialize localMapRange
+        localMapRange = accumMapRange;
+        localMapRange.right = localMapRange.left + params.LocalMap.initialWidth/params.Scale.xScale;
+        localMapRange.top = localMapRange.bottom + params.LocalMap.initialHeight/params.Scale.yScale;
+        localMapRange.update();
     }
     if(accumMapRange != dynamicMapRange)
     {
@@ -403,6 +424,40 @@ bool HdlEngine::updateAccumMap()
                             accumMap[i + sourceShift] + sourceCopyIndex,
                             sizeof(Grid) * copyLength);
         }
+        //Write those grids that become "out of range" on local map, before being discarded.
+        adjustLocalMapSize();
+        //meaning of the following variables:
+        //'b' represent "begin of..."
+        //'f' represent "full copy..."
+        int bxf, exf, bxp, exp, byp, eyp;
+        if(deltax < 0)
+        {
+            bxf = exp = indexLength;
+            exf = accumMapRange.maxX;
+            bxp = 0;
+            byp = copyLength;
+            eyp = accumMapRange.maxY;
+        }else
+        {
+            bxf = byp = 0;
+            exf = bxp = deltax;
+            exp = accumMapRange.maxX;
+            eyp = deltay;
+        }
+        int globalx, globaly;
+        for(int x = bxf; x < exf; ++x)
+        {
+            for(int y = 0; y < accumMapRange.maxY; ++y)
+            {
+                accumMapRange.translate(x, y, localMapRange, globalx, globaly);
+                if(accumMap[x][y].iaverage > 80)
+                {
+                    writeAOnMat(localMap, globalx, globaly, LANELINE);
+                }
+            }
+        }
+
+
     }else{
         //or else, just swap them, avoiding copy all value
         Grid** tmp = accumMap;
@@ -416,7 +471,7 @@ bool HdlEngine::updateAccumMap()
         for(int y = 0; y < dynamicMapRange.maxY; ++y)
         {
                 mergeGrid(newAccumMap[x][y], dynamicMap[x][y]);
-                if(newAccumMap[x][y].HitCount > 2
+                if(newAccumMap[x][y].HitCount > 3
                         && ((double)(newAccumMap[x][y].HitCount)) / newAccumMap[x][y].pointNum >= params.ProbMap.OccupiedThreshold)
                 {
                     newAccumMap[x][y].o = OCCUPIED;
@@ -425,13 +480,17 @@ bool HdlEngine::updateAccumMap()
                 {
                     newAccumMap[x][y].o = CLEAR;
                 }
+                if(newAccumMap[x][y].iaverage > 80)
+                {
+                    newAccumMap[x][y].a = LANELINE;
+                }
 
 
 //                if (newAccumMap[id].p < 0.5)
 //                {
 //                    if (dynamicMap[id].p < newAccumMap[id].p)
 //                    {
-//                        newAccumMap[id].p = dynamicMap[id].p;
+//                        newAccumMabasep[id].p = dynamicMap[id].p;
 //                    }
 //                    else if (dynamicMap[id].p > 0.5/*0.99*/)
 //                    {
@@ -539,11 +598,7 @@ bool HdlEngine::updateLocalMap()
     //if the first time to update
     if(frameProcessedNum == 1)
     {
-        //initialize localMapRange
-        localMapRange = accumMapRange;
-        localMapRange.right = localMapRange.left + params.LocalMap.initialWidth/params.Scale.xScale;
-        localMapRange.top = localMapRange.bottom + params.LocalMap.initialHeight/params.Scale.yScale;
-        localMapRange.update();
+
     }
     adjustLocalMapSize();
     int localX, localY;
@@ -604,14 +659,14 @@ bool HdlEngine::updateRegion(cv::Mat region, Grid** accumMap)
     {
         for(unsigned short y = 0; y < accumMapRange.maxY; ++y)
         {
-            writeOnMat(region, x, y, accumMap[x][y].a);
-            writeOnMat(region, x, y, accumMap[x][y].o);
+            writeOOnMat(region, x, y, accumMap[x][y].a);
+            writeOOnMat(region, x, y, accumMap[x][y].o);
         }
     }
     return true;
 }
 
-bool HdlEngine::writeOnMat(cv::Mat mat, int x, int y, unsigned char value)
+bool HdlEngine::writeOOnMat(cv::Mat mat, int x, int y, unsigned char value)
 {
 //    mat.at<unsigned char>(mat.rows - y -1, x) = value;
     switch (value) {
@@ -639,6 +694,17 @@ bool HdlEngine::writeOnMat(cv::Mat mat, int x, int y, unsigned char value)
         break;
     }
     return true;
+}
+
+bool HdlEngine::writeAOnMat(cv::Mat mat, int x, int y, unsigned char value)
+{
+    switch (value) {
+    case LANELINE:
+        mat.at<cv::Vec3b>(mat.rows - y -1, x)[0] |= LANELINE_HDL;
+        break;
+    default:
+        break;
+    }
 }
 
 Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)

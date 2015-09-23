@@ -21,7 +21,8 @@ HEADERS += \
 LIBS += `pkg-config opencv --cflags --libs` \
         -lglog\
        -lboost_system\
-       -lboost_thread
+       -lboost_thread\
+       -lboost_program_options
 
 INCLUDEPATH += /usr/include/opencv \
              /usr/include/opencv2 \
