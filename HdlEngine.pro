@@ -1,9 +1,12 @@
-TEMPLATE = app
-CONFIG += console
+#TEMPLATE = app
+TEMPLATE = lib
+#CONFIG += console
+#CONFIG += staticlib
 CONFIG -= app_bundle
 CONFIG -= qt
+CONFIG += c++14
 
-SOURCES += main.cpp \
+SOURCES += \
     HdlEngine.cpp \
     ../ugv-share/config.cpp \
     HdlCorrection.cpp \
@@ -25,10 +28,17 @@ LIBS += `pkg-config opencv --cflags --libs` \
        -lboost_program_options
 
 INCLUDEPATH += /usr/include/opencv \
-             /usr/include/opencv2 \
-            /home/victor/workspace/zoulu
+             /usr/include/opencv2
+#            /home/victor/workspace/zoulu
 DEFINES += DEBUG
 DEFINES += OFFLINE
 
 DISTFILES += \
     ../ugv-share/ugv.conf
+
+unix {
+#    CONFIG += staticlib
+    CONFIG += dll
+    target.path = /usr/local/lib
+    INSTALLS += target
+}

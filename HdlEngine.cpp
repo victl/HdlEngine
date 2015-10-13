@@ -26,6 +26,9 @@ HdlEngine::HdlEngine()
     , accumMapRange(Carpose(), params)
     , localMapRange(Carpose(), params)
     , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC3, cv::Scalar(0,0,0))
+    , lValid(false)
+    , rValid(false)
+    , sValid(false)
 {
     rawHdlPoints = new RawHdlPoint[MAX_CLOUD_SIZE];
     hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_SIZE];
@@ -45,6 +48,7 @@ HdlEngine::HdlEngine()
     lpts = new SimpleCarpose[params.Hdl.MaxCP];
     rpts = new SimpleCarpose[params.Hdl.MaxCP];
     spts = new SimpleCarpose[params.Hdl.MaxCP];
+    counter.fill(0);
 }
 
 HdlEngine::HdlEngine(const std::string hdlFileName)
@@ -55,6 +59,9 @@ HdlEngine::HdlEngine(const std::string hdlFileName)
     , accumMapRange(Carpose(), params)
     , localMapRange(Carpose(), params)
     , localMap(params.LocalMap.initialHeight, params.LocalMap.initialWidth, CV_8UC3, cv::Scalar(0,0,0))
+    , lValid(false)
+    , rValid(false)
+    , sValid(false)
 {
     rawHdlPoints = new RawHdlPoint[MAX_CLOUD_SIZE];
     hdlPointXYZs = new HdlPointXYZ[MAX_CLOUD_SIZE];
@@ -74,6 +81,7 @@ HdlEngine::HdlEngine(const std::string hdlFileName)
     lpts = new SimpleCarpose[params.Hdl.MaxCP];
     rpts = new SimpleCarpose[params.Hdl.MaxCP];
     spts = new SimpleCarpose[params.Hdl.MaxCP];
+    counter.fill(0);
     initialize(hdlFileName);
 }
 
@@ -180,18 +188,20 @@ bool HdlEngine::processNextFrame()
         unsigned char intensity = hdlPointCloud[i].intensity;
 //        unsigned char beamId = hdlPointCloud[i].beamId;
 
-        if( distance < 3000 //3 meters
+        int x = hdlPointCloud[i].x;
+        int y = hdlPointCloud[i].y;
+        int z = hdlPointCloud[i].z;
+
+        if( (distance < 3000 //3 meters
                 && rotAngle > 18000 - correction.blockedByHipAngle  //135 degree
-                && rotAngle < 18000 + correction.blockedByHipAngle //225 degree
+                && rotAngle < 18000 + correction.blockedByHipAngle) //225 degree
+                || z > params.Hdl.Ceiling
                 )
         {
             //means current point is not useful
             continue;
         }
 
-        int x = hdlPointCloud[i].x;
-        int y = hdlPointCloud[i].y;
-        int z = hdlPointCloud[i].z;
 /*
         if( //distance < 5000 && //3 meters
                 (rotAngle > 35700 || rotAngle < 300) &&
@@ -248,6 +258,11 @@ bool HdlEngine::processNextFrame()
 
         dynamicMap[col][row].zaverage = (dynamicMap[col][row].zaverage *dynamicMap[col][row].pointNum + z) / (dynamicMap[col][row].pointNum + 1);//testing
         ++dynamicMap[col][row].pointNum;
+//test start
+        int indx = z / 200;
+        if(indx > -20 && indx < 0)
+            ++counter[-indx];
+//test end
         if (!dynamicMap[col][row].highest &&!dynamicMap[col][row].lowest)
         {
             dynamicMap[col][row].highest = z;
@@ -705,6 +720,7 @@ bool HdlEngine::writeAOnMat(cv::Mat mat, int x, int y, unsigned char value)
     default:
         break;
     }
+    return true;
 }
 
 Point3B HdlEngine::get3b(unsigned short xx, unsigned short yy, MapType type)

@@ -5,13 +5,12 @@
 #include "HdlCorrection.h"
 #include <string>
 #include <vector>
+#include <array>
 #include <map>
 #include <iostream>
 #include <fstream>
 #include <opencv2/opencv.hpp>
 #include <glog/logging.h>
-
-#define DEBUG
 
 namespace victl {
 
@@ -145,6 +144,8 @@ private:
     Range localMapRange;
 
     //FOWLLOWING VARIABLES ARE FOR TESTING
+public:
+    std::array<long, 20> counter;
 
 };
 
