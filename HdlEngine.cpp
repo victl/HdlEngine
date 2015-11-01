@@ -184,7 +184,9 @@ bool HdlEngine::processNextFrame()
     for (int i = 0; i < totalPointsNum; ++i){
         //for convinence, define some tmp variables to represent current point's features:
         unsigned int distance = hdlPointCloud[i].distance;
-        unsigned short rotAngle = hdlPointCloud[i].rotAngle;
+        unsigned short rotAngle = hdlPointCloud[i].rotAngle-90;
+        if(rotAngle <= 0)
+            rotAngle += 90;
         unsigned char intensity = hdlPointCloud[i].intensity;
 //        unsigned char beamId = hdlPointCloud[i].beamId;
 
@@ -320,10 +322,19 @@ bool HdlEngine::processNextFrame()
     return true;
 }
 
+bool HdlEngine::processAllFrames(const std::string path)
+{
+    while(processNextFrame()){}//empty loop body
+    write3bPng(path + "/final-3b.png");
+    visualLocalMap(path + "/visualized-final.png");
+    return true;
+}
+
 //This function is very IN-MATURE, seemed to have some minor bugs, but I couldn't find where the problem is. So, pls use it with caution!
-bool HdlEngine::saveFrame(Grid** frame, const Range& range,const std::string& name)
+bool HdlEngine::saveFrame(Grid** frame, const Range& range,const std::string& /*name*/)
 {
     cv::Mat img(range.maxY, range.maxX, CV_8UC1, cv::Scalar(127));
+//    cv::Mat i_img(range.maxY, range.maxX, CV_8UC1, cv::Scalar(0));
     for(int x = 0; x < range.maxX; ++x){
         for(int y = 0; y < range.maxY; ++y)
         {
@@ -337,6 +348,7 @@ bool HdlEngine::saveFrame(Grid** frame, const Range& range,const std::string& na
             default:
                 break;
             }
+//            i_img.at<uchar>(img.rows - y - 1, x) = frame[x][y].iaverage;
         }
 //        int row = height - i / width - 1;
 //        int col = i % width;
@@ -352,7 +364,7 @@ bool HdlEngine::saveFrame(Grid** frame, const Range& range,const std::string& na
     }
     cv::imshow("Current Map State", img);
     cv::waitKey(20);
-//    cv::imwrite(name, img);
+//    cv::imwrite(name, i_img);
     return true;
 }
 
@@ -970,6 +982,28 @@ bool HdlEngine::readPointsFromFile()
     //                                                                         "of frame: " << frameProcessed <<" error.";
             return false;
         }
+        //testing
+        for(int i = 0; i < totalPointsNum; ++i)
+        {
+            rawHdlPoints[i].beamId = hdlPointCloud[i].beamId;
+            rawHdlPoints[i].distance = hdlPointCloud[i].distance;
+            rawHdlPoints[i].intensity = hdlPointCloud[i].intensity;
+            rawHdlPoints[i].rotAngle = hdlPointCloud[i].rotAngle -90;
+            if(rawHdlPoints[i].rotAngle < 0)
+                 rawHdlPoints[i].rotAngle += 90;
+        }
+        populateXYZ(rawHdlPoints, hdlPointXYZs, totalPointsNum);
+        for(int i = 0; i < totalPointsNum; ++i)
+        {
+            hdlPointCloud[i].beamId = rawHdlPoints[i].beamId;
+            hdlPointCloud[i].distance = rawHdlPoints[i].distance;
+            hdlPointCloud[i].intensity = rawHdlPoints[i].intensity;
+            hdlPointCloud[i].rotAngle = rawHdlPoints[i].rotAngle;
+            hdlPointCloud[i].x = hdlPointXYZs[i].x;
+            hdlPointCloud[i].y = hdlPointXYZs[i].y;
+            hdlPointCloud[i].z = hdlPointXYZs[i].z;
+        }
+        //end testing
         //Read in the carpose of current frame
         unsigned long time;
         carposeReader >> currentPose.x >> currentPose.y >> currentPose.eulr >> currentPose.roll >> currentPose.pitch >>currentPose.speed >> time;

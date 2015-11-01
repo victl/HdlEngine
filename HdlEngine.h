@@ -26,6 +26,7 @@ public /*method*/:
     ~HdlEngine();
     bool initialize(const std::string hdlFileName);
     bool processNextFrame();
+    bool processAllFrames(const std::string path);
 
     //following two functions are mainly used for debuging
     bool saveFrame(Grid** frame, const Range& range, const std::string& name);
